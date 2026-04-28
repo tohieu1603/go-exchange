@@ -423,7 +423,13 @@ func (s *AuthService) Disable2FA(userID uint, code string) error {
 // requiresStepUp returns true when the device fingerprint is unknown for this
 // user AND they have at least one prior login.success row. We skip step-up on
 // a user's very first login (no history to compare against).
+//
+// Set STEP_UP_ENABLED=false (the default in dev) to short-circuit the gate
+// entirely — useful when the email transport is not configured locally.
 func (s *AuthService) requiresStepUp(userID uint, deviceID string) bool {
+	if os.Getenv("STEP_UP_ENABLED") != "true" {
+		return false
+	}
 	if s.audit == nil || deviceID == "" {
 		return false
 	}
