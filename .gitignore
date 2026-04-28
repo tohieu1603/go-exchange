@@ -1,0 +1,52 @@
+# Environment files (contain secrets)
+.env
+.env.*
+!.env.example
+
+# Logs
+.logs/
+*.log
+
+# Go build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+bin/
+build/
+dist/
+vendor/
+
+# Go workspace sum (regenerated)
+# go.work.sum  # keep — needed for reproducible builds
+
+# IDE / editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Coverage
+coverage.out
+coverage.html
+
+# Local Docker volumes
+pgdata-*/
+esdata/
+promdata/
+grafanadata/
+miniodata/
+thanosstore/
+filebeat-data/
+
+# Claude / AI tooling
+.claude/
+CLAUDE.md
+
+# Temp
+tmp/
+*.tmp

@@ -1,0 +1,13 @@
+go 1.25.7
+
+use (
+	./auth-service
+	./futures-service
+	./gateway
+	./market-service
+	./notification-service
+	./shared
+	./trading-service
+	./wallet-service
+	./es-indexer
+)

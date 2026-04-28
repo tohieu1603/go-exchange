@@ -1,0 +1,28 @@
+syntax = "proto3";
+package wallet;
+option go_package = "github.com/cryptox/shared/proto/walletpb";
+
+service WalletService {
+  rpc CheckBalance(CheckBalanceRequest) returns (CheckBalanceResponse);
+  rpc GetBalance(GetBalanceRequest) returns (GetBalanceResponse);
+  rpc Deduct(DeductRequest) returns (DeductResponse);
+  rpc Credit(CreditRequest) returns (CreditResponse);
+  rpc Lock(LockRequest) returns (LockResponse);
+  rpc Unlock(UnlockRequest) returns (UnlockResponse);
+  rpc UpdateBalance(UpdateBalanceRequest) returns (UpdateBalanceResponse);
+}
+
+message CheckBalanceRequest { uint64 user_id = 1; string currency = 2; double needed = 3; }
+message CheckBalanceResponse { bool sufficient = 1; double available = 2; }
+message GetBalanceRequest { uint64 user_id = 1; string currency = 2; }
+message GetBalanceResponse { double balance = 1; double locked = 2; }
+message DeductRequest { uint64 user_id = 1; string currency = 2; double amount = 3; }
+message DeductResponse { double new_balance = 1; }
+message CreditRequest { uint64 user_id = 1; string currency = 2; double amount = 3; }
+message CreditResponse { double new_balance = 1; }
+message LockRequest { uint64 user_id = 1; string currency = 2; double amount = 3; }
+message LockResponse { bool success = 1; }
+message UnlockRequest { uint64 user_id = 1; string currency = 2; double amount = 3; }
+message UnlockResponse { bool success = 1; }
+message UpdateBalanceRequest { uint64 user_id = 1; string currency = 2; double delta = 3; }
+message UpdateBalanceResponse { bool success = 1; }

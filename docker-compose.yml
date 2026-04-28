@@ -1,0 +1,380 @@
+# Infrastructure only — each service has its own PostgreSQL database
+# Ports: 5551-5556 (PG), 6389 (Redis), 9192 (Kafka), 9201 (ES)
+services:
+  pg-auth:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: auth_db
+    ports:
+      - "5551:5432"
+    volumes:
+      - pgdata-auth:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  pg-wallet:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: wallet_db
+    ports:
+      - "5552:5432"
+    volumes:
+      - pgdata-wallet:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  pg-market:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: market_db
+    ports:
+      - "5553:5432"
+    volumes:
+      - pgdata-market:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  pg-trading:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: trading_db
+    ports:
+      - "5554:5432"
+    volumes:
+      - pgdata-trading:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  pg-futures:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: futures_db
+    ports:
+      - "5555:5432"
+    volumes:
+      - pgdata-futures:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  pg-notification:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: notification_db
+    ports:
+      - "5556:5432"
+    volumes:
+      - pgdata-notification:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6389:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  kafka:
+    image: apache/kafka:3.9.0
+    hostname: kafka
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+      # Dual-listener setup so the broker is reachable from BOTH:
+      #   • inside-docker peers (other compose services) → INTERNAL://kafka:9092
+      #   • host-network clients (Go services on dev laptop) → EXTERNAL://localhost:9192
+      # Without this split, advertising "localhost" to inside-docker peers (like
+      # Kibana / es-indexer running in the same network) sends them to their own
+      # loopback rather than to the kafka container.
+      KAFKA_LISTENERS: INTERNAL://:9092,EXTERNAL://:19092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:9192
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+    ports:
+      - "9192:19092"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  elasticsearch:
+    image: elasticsearch:8.17.0
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - "9201:9200"
+    volumes:
+      - esdata:/var/lib/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q 'green\\|yellow'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Kibana — visualizes audit_logs / trades / anomaly indices.
+  # Dev access: http://localhost:5601 (no auth — disable xpack security).
+  kibana:
+    image: kibana:8.17.0
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - XPACK_SECURITY_ENABLED=false
+      - SERVER_PUBLICBASEURL=http://localhost:5601
+    ports:
+      - "5601:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  # Filebeat — production-grade log shipper. Tails .logs/<service>.log,
+  # multiline-joins Go stack traces, scrubs sensitive fields, ships to ES
+  # data streams `logs-<service>-*` governed by ILM policy `logs-policy`
+  # (rollover 1d, delete 7d). See infra/filebeat/filebeat.yml.
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.17.0
+    user: root
+    restart: unless-stopped
+    command: ["filebeat", "-e", "--strict.perms=false"]
+    volumes:
+      - ./infra/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - ./infra/filebeat/ilm-policy.json:/usr/share/filebeat/ilm-policy.json:ro
+      - ./.logs:/logs:ro
+      - filebeat-data:/usr/share/filebeat/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:5066/?pretty | grep -q '\"version\"' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.50"
+        reservations:
+          memory: 64M
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  # Prometheus — scrapes /metrics from each Go service via host.docker.internal.
+  # Configured for Thanos sidecar: min-block-duration=2h matches Thanos defaults
+  # so blocks are uploaded to MinIO promptly. Local retention shortened to 6h
+  # since long-term storage is on S3 via Thanos.
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=6h'
+      - '--storage.tsdb.min-block-duration=2h'
+      - '--storage.tsdb.max-block-duration=2h'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    ports:
+      - "9090:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # Grafana — Keycloak OIDC SSO (anonymous disabled), auto-provisioned
+  # datasources (Prometheus + Thanos querier) + Micro-Exchange dashboard.
+  grafana:
+    image: grafana/grafana:11.3.0
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_USERS_ALLOW_SIGN_UP=false
+      # Keycloak OIDC ──────────────────────────────────────────
+      - GF_AUTH_GENERIC_OAUTH_ENABLED=true
+      - GF_AUTH_GENERIC_OAUTH_NAME=Keycloak
+      - GF_AUTH_GENERIC_OAUTH_ALLOW_SIGN_UP=true
+      - GF_AUTH_GENERIC_OAUTH_CLIENT_ID=grafana
+      - GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET=grafana-client-secret-change-me
+      - GF_AUTH_GENERIC_OAUTH_SCOPES=openid profile email
+      - GF_AUTH_GENERIC_OAUTH_AUTH_URL=http://localhost:8088/realms/micro-exchange/protocol/openid-connect/auth
+      - GF_AUTH_GENERIC_OAUTH_TOKEN_URL=http://keycloak:8088/realms/micro-exchange/protocol/openid-connect/token
+      - GF_AUTH_GENERIC_OAUTH_API_URL=http://keycloak:8088/realms/micro-exchange/protocol/openid-connect/userinfo
+      - GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH=contains(groups[*], 'ops-admin') && 'Admin' || contains(groups[*], 'staff') && 'Viewer' || 'Viewer'
+      - GF_SERVER_ROOT_URL=http://localhost:3001/
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafanadata:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+      - keycloak
+
+  # ─────────────────────────────────────────────────────────────────
+  # Distributed tracing — Jaeger all-in-one (collector + UI + storage)
+  # OTLP gRPC :4317   OTLP HTTP :4318   UI :16686
+  # In-memory storage (dev-only). Production: switch backend to ES/Cassandra.
+  # ─────────────────────────────────────────────────────────────────
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"  # UI
+      - "4317:4317"    # OTLP gRPC (services push spans here)
+      - "4318:4318"    # OTLP HTTP
+
+  # ─────────────────────────────────────────────────────────────────
+  # SSO — Keycloak as central identity provider for Grafana / Kibana / etc.
+  # Realm "micro-exchange" auto-imported from infra/keycloak/realm.json.
+  # Default admin: admin/admin (change in prod).
+  # ─────────────────────────────────────────────────────────────────
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    command: ["start-dev", "--import-realm"]
+    environment:
+      - KC_BOOTSTRAP_ADMIN_USERNAME=admin
+      - KC_BOOTSTRAP_ADMIN_PASSWORD=admin
+      - KC_HTTP_PORT=8088
+      - KC_HOSTNAME=localhost
+      - KC_HOSTNAME_PORT=8088
+      - KC_HOSTNAME_STRICT=false
+      - KC_HOSTNAME_STRICT_HTTPS=false
+    volumes:
+      - ./infra/keycloak/realm.json:/opt/keycloak/data/import/realm.json:ro
+    ports:
+      - "8088:8088"
+
+  # ─────────────────────────────────────────────────────────────────
+  # Long-term Prometheus storage — Thanos sidecar uploads TSDB blocks
+  # to MinIO (S3-compatible) every 2h, store-gateway serves historical
+  # queries from MinIO, querier federates live + historical.
+  # ─────────────────────────────────────────────────────────────────
+  minio:
+    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=thanos
+      - MINIO_ROOT_PASSWORD=thanos-secret-1234
+    volumes:
+      - miniodata:/data
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # MinIO Console UI
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Auto-create the bucket "thanos" on first boot.
+  minio-bootstrap:
+    image: minio/mc:RELEASE.2024-11-21T17-21-54Z
+    depends_on:
+      minio:
+        condition: service_started
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      "
+      sleep 5;
+      mc alias set local http://minio:9000 thanos thanos-secret-1234;
+      mc mb -p local/thanos || true;
+      echo bucket-ready;
+      "
+
+  thanos-sidecar:
+    image: quay.io/thanos/thanos:v0.36.1
+    command:
+      - sidecar
+      - --tsdb.path=/prometheus
+      - --prometheus.url=http://prometheus:9090
+      - --objstore.config-file=/etc/thanos/bucket.yml
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+    volumes:
+      - promdata:/prometheus
+      - ./infra/thanos/bucket.yml:/etc/thanos/bucket.yml:ro
+    depends_on:
+      - prometheus
+      - minio
+
+  thanos-store:
+    image: quay.io/thanos/thanos:v0.36.1
+    command:
+      - store
+      - --data-dir=/var/thanos/store
+      - --objstore.config-file=/etc/thanos/bucket.yml
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+    volumes:
+      - thanosstore:/var/thanos/store
+      - ./infra/thanos/bucket.yml:/etc/thanos/bucket.yml:ro
+    depends_on:
+      - minio
+
+  thanos-querier:
+    image: quay.io/thanos/thanos:v0.36.1
+    command:
+      - query
+      - --http-address=0.0.0.0:10902
+      - --endpoint=thanos-sidecar:10901
+      - --endpoint=thanos-store:10901
+    ports:
+      - "10902:10902"  # Query UI + API (Grafana datasource points here)
+    depends_on:
+      - thanos-sidecar
+      - thanos-store
+
+volumes:
+  pgdata-auth:
+  pgdata-wallet:
+  pgdata-market:
+  pgdata-trading:
+  pgdata-futures:
+  pgdata-notification:
+  esdata:
+  promdata:
+  grafanadata:
+  miniodata:
+  thanosstore:
+  filebeat-data:

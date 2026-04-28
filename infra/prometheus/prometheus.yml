@@ -1,0 +1,52 @@
+# Prometheus scrape config for Micro-Exchange.
+#
+# Each Go service exposes /metrics on its HTTP port. Prometheus runs in
+# Docker; services run on the host, so we use host.docker.internal to reach
+# them. extra_hosts in docker-compose maps this to host-gateway on Linux.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: micro-exchange
+    env: dev
+
+scrape_configs:
+  - job_name: 'auth-service'
+    static_configs:
+      - targets: ['host.docker.internal:8081']
+        labels: { service: auth }
+
+  - job_name: 'wallet-service'
+    static_configs:
+      - targets: ['host.docker.internal:8082']
+        labels: { service: wallet }
+
+  - job_name: 'market-service'
+    static_configs:
+      - targets: ['host.docker.internal:8083']
+        labels: { service: market }
+
+  - job_name: 'trading-service'
+    static_configs:
+      - targets: ['host.docker.internal:8084']
+        labels: { service: trading }
+
+  - job_name: 'futures-service'
+    static_configs:
+      - targets: ['host.docker.internal:8085']
+        labels: { service: futures }
+
+  - job_name: 'notification-service'
+    static_configs:
+      - targets: ['host.docker.internal:8086']
+        labels: { service: notification }
+
+  - job_name: 'gateway'
+    static_configs:
+      - targets: ['host.docker.internal:8080']
+        labels: { service: gateway }
+
+  - job_name: 'prometheus-self'
+    static_configs:
+      - targets: ['localhost:9090']

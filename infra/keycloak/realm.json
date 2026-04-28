@@ -1,0 +1,78 @@
+{
+  "realm": "micro-exchange",
+  "enabled": true,
+  "displayName": "Micro-Exchange Staff",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "rememberMe": true,
+  "ssoSessionIdleTimeout": 3600,
+  "ssoSessionMaxLifespan": 28800,
+  "roles": {
+    "realm": [
+      { "name": "staff",      "description": "Internal staff (operations, support)" },
+      { "name": "ops-admin",  "description": "Full access to monitoring + admin tools" }
+    ]
+  },
+  "users": [
+    {
+      "username": "admin",
+      "email": "admin@micro-exchange.local",
+      "firstName": "Platform",
+      "lastName": "Admin",
+      "emailVerified": true,
+      "enabled": true,
+      "credentials": [
+        { "type": "password", "value": "admin", "temporary": false }
+      ],
+      "realmRoles": ["staff", "ops-admin"]
+    },
+    {
+      "username": "viewer",
+      "email": "viewer@micro-exchange.local",
+      "firstName": "Read",
+      "lastName": "Only",
+      "emailVerified": true,
+      "enabled": true,
+      "credentials": [
+        { "type": "password", "value": "viewer", "temporary": false }
+      ],
+      "realmRoles": ["staff"]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "grafana",
+      "name": "Grafana SSO Client",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "grafana-client-secret-change-me",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "http://localhost:3000/login/generic_oauth"
+      ],
+      "webOrigins": ["http://localhost:3000"],
+      "attributes": {
+        "post.logout.redirect.uris": "http://localhost:3000/+"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "config": {
+            "claim.name": "groups",
+            "jsonType.label": "String",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "multivalued": "true"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+syntax = "proto3";
+package market;
+option go_package = "github.com/cryptox/shared/proto/marketpb";
+
+service MarketService {
+  rpc GetPrice(GetPriceRequest) returns (GetPriceResponse);
+  rpc GetAllTickers(GetAllTickersRequest) returns (GetAllTickersResponse);
+}
+
+message GetPriceRequest { string pair = 1; }
+message GetPriceResponse { double price = 1; }
+message GetAllTickersRequest {}
+message GetAllTickersResponse { repeated Ticker tickers = 1; }
+message Ticker { string pair = 1; string symbol = 2; string name = 3; double price = 4; double change_24h = 5; double volume_24h = 6; string asset_type = 7; }

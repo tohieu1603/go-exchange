@@ -1,0 +1,35 @@
+syntax = "proto3";
+package auth;
+option go_package = "github.com/cryptox/shared/proto/authpb";
+
+service AuthService {
+  rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse);
+  rpc GetUser(GetUserRequest) returns (UserResponse);
+  rpc ValidateAPIKey(ValidateAPIKeyRequest) returns (ValidateAPIKeyResponse);
+  rpc Verify2FA(Verify2FARequest) returns (Verify2FAResponse);
+}
+
+message Verify2FARequest { uint64 user_id = 1; string code = 2; }
+message Verify2FAResponse { bool valid = 1; bool required = 2; }
+
+message ValidateTokenRequest { string token = 1; }
+message ValidateTokenResponse { bool valid = 1; uint64 user_id = 2; string email = 3; string role = 4; }
+message GetUserRequest { uint64 user_id = 1; }
+message UserResponse { uint64 id = 1; string email = 2; string full_name = 3; string role = 4; string kyc_status = 5; bool is_2fa = 6; }
+
+message ValidateAPIKeyRequest {
+  string key_id = 1;
+  string signature = 2;
+  string timestamp = 3;
+  string method = 4;
+  string path = 5;
+  bytes  body = 6;
+  string client_ip = 7;
+}
+message ValidateAPIKeyResponse {
+  bool valid = 1;
+  uint64 user_id = 2;
+  string role = 3;
+  string permissions = 4;
+  string error = 5;
+}

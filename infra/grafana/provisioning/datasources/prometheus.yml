@@ -1,0 +1,32 @@
+# Auto-provisioned datasources — Grafana picks these up on boot.
+apiVersion: 1
+
+datasources:
+  # Direct Prometheus — short-term (15d) raw scrape data
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: false
+    editable: false
+    jsonData:
+      httpMethod: POST
+      timeInterval: 15s
+
+  # Thanos querier — federated query across live Prometheus + S3-archived blocks
+  - name: Thanos
+    type: prometheus
+    access: proxy
+    url: http://thanos-querier:10902
+    isDefault: true        # default — covers both live + historical
+    editable: false
+    jsonData:
+      httpMethod: POST
+      timeInterval: 15s
+
+  # Jaeger — distributed traces, link from Grafana logs/metrics → trace
+  - name: Jaeger
+    type: jaeger
+    access: proxy
+    url: http://jaeger:16686
+    editable: false

@@ -1,0 +1,150 @@
+# Filebeat — production-grade log shipper for Micro-Exchange Go services.
+#
+# Pipeline: Go service → .logs/<service>.log → filestream input → multiline join
+#   → JSON parse → drop sensitive fields → ES data stream `logs-<service>-*`.
+#
+# Production hardening enabled: ILM rollover, index template with ECS mappings,
+# stack-trace multiline join, sensitive-field scrubbing, queueing for ES outage,
+# bounded memory.
+#
+# Caveats vs. fully containerized prod:
+#   - Source files mounted from host `.logs/` (read-only). When services are
+#     dockerized, switch to `add_docker_metadata` autodiscover.
+#   - No TLS/auth on ES (single-node dev cluster). For prod, set output.elasticsearch.
+#     ssl.* + api_key and re-enable xpack.security on ES.
+
+# ── Inputs ─────────────────────────────────────────────────────────────────
+filebeat.inputs:
+  - type: filestream
+    id: micro-exchange-services
+    enabled: true
+    paths:
+      - /logs/*.log
+
+    # Skip empty lines + the .pids housekeeping file written by start-all.sh.
+    exclude_files: ['\.pids$']
+
+    # Multiline: Go panics + GORM stack traces start with timestamp/`[GIN]`/
+    # `[kafka]` etc. Lines without those prefixes (indented frames, `goroutine`,
+    # `runtime.gopark`) belong to the previous record.
+    parsers:
+      - multiline:
+          type: pattern
+          pattern: '^(?:\d{4}/\d{2}/\d{2}|\[GIN\]|\[GIN-debug\]|\[kafka\]|\{)'
+          negate: true
+          match: after
+          max_lines: 200
+          timeout: 2s
+      - ndjson:
+          target: ""
+          add_error_key: true
+          ignore_decoding_error: true
+          overwrite_keys: true
+
+    # Tag service name from filename (`auth.log` → service=auth) and tack on
+    # cluster/env. Drop noisy default fields and any sensitive fields a service
+    # might accidentally log.
+    processors:
+      - dissect:
+          tokenizer: "%{}/logs/%{service.name}.log"
+          field: "log.file.path"
+          target_prefix: ""
+      - add_fields:
+          target: ""
+          fields:
+            cluster: micro-exchange
+            env: dev
+      - drop_fields:
+          fields:
+            - "host"
+            - "agent.ephemeral_id"
+            - "agent.id"
+            - "agent.hostname"
+            - "ecs.version"
+            - "input"
+            # Common sensitive keys — drop unconditionally even if a service
+            # leaks them. Add new ones here when discovered in audits.
+            - "password"
+            - "passwordHash"
+            - "refreshToken"
+            - "accessToken"
+            - "tempToken"
+            - "stepUpToken"
+            - "wsToken"
+            - "Authorization"
+            - "cookie"
+            - "set-cookie"
+          ignore_missing: true
+
+# ── Output ─────────────────────────────────────────────────────────────────
+# Write directly to data stream `mx-logs` (created by setup.template + ILM).
+# `service.name` is a doc field — query in Kibana with `service.name : "auth"`.
+# This avoids per-service ILM ops overhead.
+output.elasticsearch:
+  hosts: ["http://elasticsearch:9200"]
+  index: "mx-logs"
+  bulk_max_size: 1024
+  worker: 2
+  compression_level: 3
+  backoff.init: 1s
+  backoff.max: 60s
+
+# ── Index template + ILM ──────────────────────────────────────────────────
+setup.ilm.enabled: true
+setup.ilm.policy_name: "mx-logs-policy"
+setup.ilm.policy_file: /usr/share/filebeat/ilm-policy.json
+setup.ilm.rollover_alias: "mx-logs"
+setup.ilm.pattern: "{now/d}-000001"
+
+# Use a project-prefixed name. `logs` and `logs-*` are reserved by x-pack's
+# built-in template (priority 100, pattern `logs-*-*`) — registering our own
+# under those names is rejected, breaking data stream creation.
+setup.template.enabled: true
+setup.template.type: "index"
+setup.template.name: "mx-logs"
+setup.template.pattern: "mx-logs*"
+setup.template.overwrite: true
+setup.template.settings:
+  index:
+    number_of_shards: 1
+    number_of_replicas: 0
+    refresh_interval: 10s
+    codec: best_compression
+setup.template.mappings:
+  dynamic: true
+  properties:
+    "@timestamp": { type: date }
+    cluster:      { type: keyword }
+    env:          { type: keyword }
+    service:
+      properties:
+        name: { type: keyword }
+    log:
+      properties:
+        level:  { type: keyword }
+        logger: { type: keyword }
+    message: { type: text }
+    error:
+      properties:
+        message: { type: text }
+        stack_trace: { type: text, index: false }
+
+# ── Internal queue (RAM buffer) ───────────────────────────────────────────
+queue.mem:
+  events: 4096
+  flush.min_events: 256
+  flush.timeout: 1s
+
+# ── Health + ops ─────────────────────────────────────────────────────────
+http.enabled: true
+http.host: 0.0.0.0
+http.port: 5066
+
+logging.level: info
+logging.to_files: false
+logging.to_stderr: true
+logging.metrics.enabled: false
+
+# Bounded memory — prevents runaway RSS during ES outages.
+# Maps roughly to filebeat's GC tuning.
+max_procs: 1
