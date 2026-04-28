@@ -136,9 +136,15 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 // @Router       /auth/profile [get]
 func (h *AuthHandler) Profile(c *gin.Context) {
 	userID := middleware.GetUserID(c)
+	if userID == 0 {
+		response.Error(c, 401, "auth required")
+		return
+	}
 	user, err := h.auth.GetProfile(userID)
 	if err != nil {
-		response.Error(c, 404, "user not found")
+		// Stale cookie pointing at a deleted user (e.g. DB reseed) — return 401
+		// so the FE clears auth state. 404 here looks like a routing bug.
+		response.Error(c, 401, "auth invalid")
 		return
 	}
 	response.OK(c, user)
@@ -275,11 +281,22 @@ func (h *AuthHandler) Disable2FA(c *gin.Context) {
 
 // WSToken returns a short-lived access token to attach as ?token= on the WS handshake.
 // The HttpOnly access cookie is invisible to JS, so this endpoint is the bridge.
+//
+// Failure modes:
+//   - userID == 0  → 401, the JWT middleware should have caught this; defensive.
+//   - user deleted → 401, treat as a stale cookie (DB reseed, account purge);
+//                    the FE clears auth state and prompts re-login.
+//   - signing fail → 500, real server problem.
 func (h *AuthHandler) WSToken(c *gin.Context) {
 	userID := middleware.GetUserID(c)
+	if userID == 0 {
+		response.Error(c, 401, "auth required")
+		return
+	}
 	token, err := h.auth.GenerateWSToken(userID)
 	if err != nil {
-		response.Error(c, 500, err.Error())
+		// Most common: gorm.ErrRecordNotFound after a DB reseed.
+		response.Error(c, 401, "auth invalid: "+err.Error())
 		return
 	}
 	response.OK(c, gin.H{"token": token})
