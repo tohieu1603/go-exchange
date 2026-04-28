@@ -35,6 +35,39 @@ func getEnv(k, d string) string {
 	return d
 }
 
+const swaggerAggregatorHTML = `<!DOCTYPE html>
+<html>
+<head>
+  <title>Micro-Exchange API Docs</title>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+</head>
+<body>
+  <div id="ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script>
+    SwaggerUIBundle({
+      dom_id: '#ui',
+      urls: [
+        {url: "http://localhost:8081/swagger/doc.json", name: "Auth Service (8081)"},
+        {url: "http://localhost:8082/swagger/doc.json", name: "Wallet Service (8082)"},
+        {url: "http://localhost:8083/swagger/doc.json", name: "Market Service (8083)"},
+        {url: "http://localhost:8084/swagger/doc.json", name: "Trading Service (8084)"},
+        {url: "http://localhost:8085/swagger/doc.json", name: "Futures Service (8085)"},
+        {url: "http://localhost:8086/swagger/doc.json", name: "Notification Service (8086)"}
+      ],
+      "urls.primaryName": "Auth Service (8081)",
+      layout: "BaseLayout"
+    });
+  </script>
+</body>
+</html>`
+
+func swaggerAggregatorHandler(c *gin.Context) {
+	c.Data(200, "text/html; charset=utf-8", []byte(swaggerAggregatorHTML))
+}
+
 func main() {
 	_ = godotenv.Load() // load .env if present
 	port := getEnv("PORT", "8080")
@@ -73,10 +106,21 @@ func main() {
 	)
 	r.GET("/metrics", metrics.Handler())
 
-	r.GET("/health", func(c *gin.Context) {
+	// Swagger aggregator UI — no auth required
+	r.GET("/swagger", swaggerAggregatorHandler)
+	r.GET("/api/swagger", swaggerAggregatorHandler)
+
+	// Health probe — exposed on both `/health` (standard) and `/api/health`
+	// (matches the FE's NEXT_PUBLIC_API_URL prefix so a single base URL works).
+	healthHandler := func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok", "ws_clients": hub.ClientCount()})
-	})
+	}
+	r.GET("/health", healthHandler)
+	r.GET("/api/health", healthHandler)
+	// WebSocket — exposed under both `/ws` (legacy) and `/api/ws` so the FE
+	// can use a single `${NEXT_PUBLIC_API_URL}/ws` base. Either path works.
 	r.GET("/ws", hub.HandleWS)
+	r.GET("/api/ws", hub.HandleWS)
 
 	// Route table: path prefix → target + auth required
 	type route struct {
@@ -95,7 +139,9 @@ func main() {
 		"/api/wallet/":        {walletURL, true},
 		"/api/trading/":       {tradingURL, true},
 		"/api/futures/":       {futuresURL, true},
-		"/api/notifications":  {notifURL, true},
+		// No trailing slash: needs to match both the list path (`/api/notifications`)
+		// and sub-resource paths (`/api/notifications/unread-count`, `/:id/read`).
+		"/api/notifications": {notifURL, true},
 		// Admin routes split by owning service
 		"/api/admin/deposits":    {walletURL, true},
 		"/api/admin/withdrawals": {walletURL, true},
@@ -103,17 +149,31 @@ func main() {
 	}
 
 	// Single handler that matches path prefix and proxies
-	r.NoRoute(rl.GinMiddleware("global", time.Minute, 1000), func(c *gin.Context) {
+	// Global rate limit per client IP. 3000/min is generous for dev; matches a
+	// trader heavy-clicking intervals/order book + background polling without
+	// hitting 429. Tighter per-route limits live in the upstream services.
+	r.NoRoute(rl.GinMiddleware("global", time.Minute, 3000), func(c *gin.Context) {
 		path := c.Request.URL.Path
 
 		// Find matching route (exact match first, then prefix)
 		var matched route
 		found := false
 
-		// Special: /api/admin/users/:id/wallets → wallet-service
-		if strings.HasPrefix(path, "/api/admin/users/") && strings.HasSuffix(path, "/wallets") {
-			matched = route{walletURL, true}
-			found = true
+		// Special-cases: per-user admin sub-resources owned by service-specific tables.
+		// Each sub-resource is short-circuited to its owning service rather than
+		// the default `/api/admin/` → auth-service mapping.
+		if strings.HasPrefix(path, "/api/admin/users/") {
+			switch {
+			case strings.HasSuffix(path, "/wallets"):
+				matched = route{walletURL, true}
+				found = true
+			case strings.HasSuffix(path, "/orders"):
+				matched = route{tradingURL, true}
+				found = true
+			case strings.HasSuffix(path, "/positions"):
+				matched = route{futuresURL, true}
+				found = true
+			}
 		}
 
 		// Exact matches

@@ -1,3 +1,9 @@
+// @title           Auth Service API
+// @version         1.0
+// @description     Authentication, user management, KYC, API keys, referrals
+// @host            localhost:8081
+// @BasePath        /api
+
 package main
 
 import (
@@ -32,6 +38,10 @@ import (
 	"google.golang.org/grpc"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
+	_ "github.com/cryptox/auth-service/cmd/docs"
 )
 
 func main() {
@@ -142,6 +152,7 @@ func main() {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery(), middleware.CORS(), otelgin.Middleware("auth"), metrics.GinMiddleware("auth"), middleware.WAF())
 	r.GET("/metrics", metrics.Handler())
+	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	api := r.Group("/api")
 	api.POST("/auth/register", rl.GinMiddleware("register", time.Minute, 5), authH.Register)
@@ -211,6 +222,12 @@ func main() {
 
 	// Admin platform-wide audit feed.
 	admin.GET("/audit", auditH.AdminAudit)
+
+	// KYC document file serving — admins only. Files are saved by KYCHandler
+	// to ./uploads/kyc/<userID>/<docType>.{jpg|png}; this route streams them
+	// back so the admin UI can render previews. Path traversal is blocked by
+	// gin's StaticFS (Clean()-d paths) plus the AdminOnly gate above.
+	admin.StaticFS("/kyc-files", http.Dir("./uploads/kyc"))
 
 	// Note: UserTradePair table is owned by market-service (auto-migrated there).
 

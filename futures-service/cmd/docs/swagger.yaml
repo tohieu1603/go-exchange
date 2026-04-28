@@ -1,0 +1,173 @@
+basePath: /api
+definitions:
+  service.OpenPositionReq:
+    properties:
+      leverage:
+        maximum: 125
+        minimum: 1
+        type: integer
+      pair:
+        type: string
+      side:
+        type: string
+      size:
+        type: number
+      stopLoss:
+        type: number
+      takeProfit:
+        type: number
+    required:
+    - leverage
+    - pair
+    - side
+    - size
+    type: object
+host: localhost:8085
+info:
+  contact: {}
+  description: 'Perpetual futures: positions, funding rates, TP/SL'
+  title: Futures Service API
+  version: "1.0"
+paths:
+  /futures/close/{id}:
+    post:
+      parameters:
+      - description: Position ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Close a futures position
+      tags:
+      - futures
+  /futures/funding/{pair}/latest:
+    get:
+      parameters:
+      - description: Perpetual pair e.g. BTC_USDT
+        in: path
+        name: pair
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Latest funding rate for a pair
+      tags:
+      - funding
+  /futures/order:
+    post:
+      consumes:
+      - application/json
+      description: Side must be LONG or SHORT; leverage 1-125
+      parameters:
+      - description: Position payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/service.OpenPositionReq'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Open a futures position
+      tags:
+      - futures
+  /futures/positions:
+    get:
+      parameters:
+      - description: 'Filter: OPEN CLOSED LIQUIDATED'
+        in: query
+        name: status
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - CookieAuth: []
+      summary: List all positions (optionally filtered by status)
+      tags:
+      - futures
+  /futures/positions/{id}/tpsl:
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Position ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: TP/SL values
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            stopLoss:
+              type: number
+            takeProfit:
+              type: number
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Update take-profit / stop-loss for a position
+      tags:
+      - futures
+swagger: "2.0"

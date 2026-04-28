@@ -1,0 +1,113 @@
+basePath: /api
+host: localhost:8083
+info:
+  contact: {}
+  description: 'Market data: tickers, order book depth, trades, candles, exchange
+    rate'
+  title: Market Service API
+  version: "1.0"
+paths:
+  /market/candles/{pair}:
+    get:
+      parameters:
+      - description: Trading pair e.g. BTC_USDT
+        in: path
+        name: pair
+        required: true
+        type: string
+      - description: 'Candle interval: 1m 5m 15m 1h 4h 1d (default 1h)'
+        in: query
+        name: interval
+        type: string
+      - description: Max candles (default 500, max 1500)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      summary: Get OHLCV candles for a pair
+      tags:
+      - market
+  /market/depth/{pair}:
+    get:
+      parameters:
+      - description: Trading pair e.g. BTC_USDT
+        in: path
+        name: pair
+        required: true
+        type: string
+      - description: Depth levels (default 20, max 100)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Get order book depth for a pair
+      tags:
+      - market
+  /market/rate:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Get VND/USDT exchange rate
+      tags:
+      - market
+  /market/tickers:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Get all market tickers
+      tags:
+      - market
+  /market/trades/{pair}:
+    get:
+      parameters:
+      - description: Trading pair e.g. BTC_USDT
+        in: path
+        name: pair
+        required: true
+        type: string
+      - description: Max results (default 50, max 200)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      summary: Get recent trades for a pair
+      tags:
+      - market
+swagger: "2.0"

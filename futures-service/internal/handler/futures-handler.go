@@ -18,7 +18,17 @@ func NewFuturesHandler(futures *service.FuturesService) *FuturesHandler {
 	return &FuturesHandler{futures: futures}
 }
 
-// OpenPosition POST /api/futures/order
+// OpenPosition godoc
+// @Summary      Open a futures position
+// @Description  Side must be LONG or SHORT; leverage 1-125
+// @Tags         futures
+// @Accept       json
+// @Produce      json
+// @Security     CookieAuth
+// @Param        body  body  service.OpenPositionReq  true  "Position payload"
+// @Success      201  {object}  map[string]interface{}
+// @Failure      400  {object}  map[string]interface{}
+// @Router       /futures/order [post]
 func (h *FuturesHandler) OpenPosition(c *gin.Context) {
 	var req service.OpenPositionReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -44,7 +54,15 @@ func (h *FuturesHandler) OpenPosition(c *gin.Context) {
 	response.Created(c, pos)
 }
 
-// ClosePosition POST /api/futures/close/:id
+// ClosePosition godoc
+// @Summary      Close a futures position
+// @Tags         futures
+// @Produce      json
+// @Security     CookieAuth
+// @Param        id   path  int  true  "Position ID"
+// @Success      200  {object}  map[string]interface{}
+// @Failure      404  {object}  map[string]interface{}
+// @Router       /futures/close/{id} [post]
 func (h *FuturesHandler) ClosePosition(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 64)
@@ -67,7 +85,14 @@ func (h *FuturesHandler) ClosePosition(c *gin.Context) {
 	response.OK(c, pos)
 }
 
-// Positions GET /api/futures/positions
+// Positions godoc
+// @Summary      List all positions (optionally filtered by status)
+// @Tags         futures
+// @Produce      json
+// @Security     CookieAuth
+// @Param        status  query  string  false  "Filter: OPEN CLOSED LIQUIDATED"
+// @Success      200  {array}   map[string]interface{}
+// @Router       /futures/positions [get]
 func (h *FuturesHandler) Positions(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	status := c.Query("status")
@@ -79,7 +104,17 @@ func (h *FuturesHandler) Positions(c *gin.Context) {
 	response.OK(c, positions)
 }
 
-// UpdateTPSL PUT /api/futures/positions/:id/tpsl
+// UpdateTPSL godoc
+// @Summary      Update take-profit / stop-loss for a position
+// @Tags         futures
+// @Accept       json
+// @Produce      json
+// @Security     CookieAuth
+// @Param        id    path  int                                         true  "Position ID"
+// @Param        body  body  object{takeProfit=number,stopLoss=number}   true  "TP/SL values"
+// @Success      200  {object}  map[string]interface{}
+// @Failure      400  {object}  map[string]interface{}
+// @Router       /futures/positions/{id}/tpsl [put]
 func (h *FuturesHandler) UpdateTPSL(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 64)

@@ -1,0 +1,181 @@
+basePath: /api
+definitions:
+  service.LoginReq:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+    required:
+    - email
+    - password
+    type: object
+  service.RegisterReq:
+    properties:
+      email:
+        type: string
+      fullName:
+        type: string
+      password:
+        minLength: 6
+        type: string
+      referralCode:
+        type: string
+    required:
+    - email
+    - fullName
+    - password
+    type: object
+host: localhost:8081
+info:
+  contact: {}
+  description: Authentication, user management, KYC, API keys, referrals
+  title: Auth Service API
+  version: "1.0"
+paths:
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Authenticates user; sets cookies on success. Returns requires2FA
+        flag if 2FA enabled.
+      parameters:
+      - description: Login payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/service.LoginReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Login
+      tags:
+      - auth
+  /auth/logout:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Logout current session
+      tags:
+      - auth
+  /auth/profile:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Get current user profile
+      tags:
+      - auth
+  /auth/refresh:
+    post:
+      description: Rotates refresh token cookie and re-issues both cookies
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Refresh access token
+      tags:
+      - auth
+  /auth/register:
+    post:
+      consumes:
+      - application/json
+      description: Creates account and sets HttpOnly access + refresh cookies
+      parameters:
+      - description: Registration payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/service.RegisterReq'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: user object
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Register a new user
+      tags:
+      - auth
+  /auth/step-up:
+    post:
+      consumes:
+      - application/json
+      description: Confirms new-device challenge; issues access + refresh cookies
+        on success
+      parameters:
+      - description: Step-up payload
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            code:
+              type: string
+            token:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Complete step-up (new-device) challenge
+      tags:
+      - auth
+swagger: "2.0"

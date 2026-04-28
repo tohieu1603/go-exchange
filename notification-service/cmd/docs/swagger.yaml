@@ -1,0 +1,88 @@
+basePath: /api
+host: localhost:8086
+info:
+  contact: {}
+  description: 'User notifications: list, mark read, unread count'
+  title: Notification Service API
+  version: "1.0"
+paths:
+  /notifications:
+    get:
+      parameters:
+      - description: Page (default 1)
+        in: query
+        name: page
+        type: integer
+      - description: Page size (default 20, max 50)
+        in: query
+        name: size
+        type: integer
+      - description: Only unread notifications
+        in: query
+        name: unread
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: List notifications
+      tags:
+      - notifications
+  /notifications/{id}/read:
+    post:
+      parameters:
+      - description: Notification ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Mark a notification as read
+      tags:
+      - notifications
+  /notifications/read-all:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Mark all notifications as read
+      tags:
+      - notifications
+  /notifications/unread-count:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Get unread notification count
+      tags:
+      - notifications
+swagger: "2.0"

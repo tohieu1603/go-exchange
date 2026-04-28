@@ -15,7 +15,16 @@ func NewAuthHandler(auth *service.AuthService) *AuthHandler {
 	return &AuthHandler{auth: auth}
 }
 
-// Register — issues access + refresh as HttpOnly cookies. Body returns user only.
+// Register godoc
+// @Summary      Register a new user
+// @Description  Creates account and sets HttpOnly access + refresh cookies
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        body  body  service.RegisterReq  true  "Registration payload"
+// @Success      201   {object}  map[string]interface{}  "user object"
+// @Failure      400   {object}  map[string]interface{}
+// @Router       /auth/register [post]
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req service.RegisterReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -34,6 +43,16 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	response.Created(c, gin.H{"user": user})
 }
 
+// Login godoc
+// @Summary      Login
+// @Description  Authenticates user; sets cookies on success. Returns requires2FA flag if 2FA enabled.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        body  body  service.LoginReq  true  "Login payload"
+// @Success      200   {object}  map[string]interface{}
+// @Failure      401   {object}  map[string]interface{}
+// @Router       /auth/login [post]
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req service.LoginReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -61,8 +80,16 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	response.OK(c, gin.H{"user": result.User})
 }
 
-// StepUp confirms a new-device challenge issued during Login.
-// Body: {token, code}. On success, issues access + refresh cookies.
+// StepUp godoc
+// @Summary      Complete step-up (new-device) challenge
+// @Description  Confirms new-device challenge; issues access + refresh cookies on success
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        body  body  object{token=string,code=string}  true  "Step-up payload"
+// @Success      200   {object}  map[string]interface{}
+// @Failure      401   {object}  map[string]interface{}
+// @Router       /auth/step-up [post]
 func (h *AuthHandler) StepUp(c *gin.Context) {
 	var req struct {
 		Token string `json:"token" binding:"required"`
@@ -99,6 +126,14 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 	response.OK(c, gin.H{"user": user})
 }
 
+// Profile godoc
+// @Summary      Get current user profile
+// @Tags         auth
+// @Produce      json
+// @Security     CookieAuth
+// @Success      200  {object}  map[string]interface{}
+// @Failure      404  {object}  map[string]interface{}
+// @Router       /auth/profile [get]
 func (h *AuthHandler) Profile(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	user, err := h.auth.GetProfile(userID)
@@ -145,8 +180,14 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 	response.OK(c, gin.H{"message": "password changed; all sessions revoked"})
 }
 
-// RefreshAccessToken rotates the refresh token and re-issues both cookies.
-// The presented refresh token is invalidated; a new one (same family) is issued.
+// RefreshAccessToken godoc
+// @Summary      Refresh access token
+// @Description  Rotates refresh token cookie and re-issues both cookies
+// @Tags         auth
+// @Produce      json
+// @Success      200  {object}  map[string]interface{}
+// @Failure      401  {object}  map[string]interface{}
+// @Router       /auth/refresh [post]
 func (h *AuthHandler) RefreshAccessToken(c *gin.Context) {
 	refreshToken, err := c.Cookie(middleware.RefreshCookieName)
 	if err != nil || refreshToken == "" {
@@ -164,7 +205,13 @@ func (h *AuthHandler) RefreshAccessToken(c *gin.Context) {
 	response.OK(c, gin.H{"refreshed": true})
 }
 
-// LogoutHandler revokes the current refresh token + clears cookies.
+// LogoutHandler godoc
+// @Summary      Logout current session
+// @Tags         auth
+// @Produce      json
+// @Security     CookieAuth
+// @Success      200  {object}  map[string]interface{}
+// @Router       /auth/logout [post]
 func (h *AuthHandler) LogoutHandler(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	email, _ := c.Get("email")

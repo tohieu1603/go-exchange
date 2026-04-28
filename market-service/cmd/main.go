@@ -1,3 +1,9 @@
+// @title           Market Service API
+// @version         1.0
+// @description     Market data: tickers, order book depth, trades, candles, exchange rate
+// @host            localhost:8083
+// @BasePath        /api
+
 package main
 
 import (
@@ -22,6 +28,10 @@ import (
 	"google.golang.org/grpc"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
+	_ "github.com/cryptox/market-service/cmd/docs"
 )
 
 func getEnv(key, fallback string) string {
@@ -72,6 +82,7 @@ func main() {
 	r := gin.New()
 	r.Use(gin.Recovery(), otelgin.Middleware("market"), metrics.GinMiddleware("market"), middleware.WAF())
 	r.GET("/metrics", metrics.Handler())
+	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	api := r.Group("/api/market")
 	api.GET("/tickers", marketHandler.Tickers)

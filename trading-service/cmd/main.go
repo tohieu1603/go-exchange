@@ -1,3 +1,9 @@
+// @title           Trading Service API
+// @version         1.0
+// @description     Spot order placement, cancellation, and order history
+// @host            localhost:8084
+// @BasePath        /api
+
 package main
 
 import (
@@ -25,6 +31,10 @@ import (
 	"github.com/redis/go-redis/v9"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
+	_ "github.com/cryptox/trading-service/cmd/docs"
 )
 
 func main() {
@@ -107,13 +117,15 @@ func main() {
 	bus.StartConsumer(consumerCtx, eventbus.TopicOrderUpdated, "order-projector", "worker-1")
 	log.Println("[trading] CQRS projectors started (trade, order)")
 
-	// Handler
+	// Handlers
 	tradingHandler := handler.NewTradingHandler(matchingEngine, balCache, locker, walletClient, orderSvc)
+	adminHandler := handler.NewAdminHandler(orderSvc)
 
 	// HTTP router
 	r := gin.New()
 	r.Use(gin.Recovery(), otelgin.Middleware("trading"), metrics.GinMiddleware("trading"), middleware.WAF())
 	r.GET("/metrics", metrics.Handler())
+	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	api := r.Group("/api/trading", middleware.JWTAuth(cfg.JWTSecret), middleware.KYCGate(rdb))
 	{
@@ -123,6 +135,13 @@ func main() {
 		// Read-only — read permission implicit (any active key).
 		api.GET("/orders", tradingHandler.OrderHistory)
 		api.GET("/orders/open", tradingHandler.OpenOrders)
+	}
+
+	// Admin — view any user's order history. Gateway routes
+	// /api/admin/users/:id/orders to this service via a special-case match.
+	admin := r.Group("/api/admin", middleware.JWTAuth(cfg.JWTSecret), middleware.AdminOnly())
+	{
+		admin.GET("/users/:id/orders", adminHandler.UserOrders)
 	}
 
 	srv := &http.Server{Addr: ":" + httpPort, Handler: r}

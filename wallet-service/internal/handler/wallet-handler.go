@@ -19,6 +19,14 @@ func NewWalletHandler(wallet *service.WalletService, authClient *walletgrpc.Auth
 	return &WalletHandler{wallet: wallet, authClient: authClient}
 }
 
+// Balances godoc
+// @Summary      Get wallet balances
+// @Tags         wallet
+// @Produce      json
+// @Security     CookieAuth
+// @Success      200  {object}  map[string]interface{}
+// @Failure      500  {object}  map[string]interface{}
+// @Router       /wallet/balances [get]
 func (h *WalletHandler) Balances(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	wallets, err := h.wallet.GetBalances(userID)
@@ -29,6 +37,16 @@ func (h *WalletHandler) Balances(c *gin.Context) {
 	response.OK(c, wallets)
 }
 
+// CreateDeposit godoc
+// @Summary      Initiate a VND deposit
+// @Tags         wallet
+// @Accept       json
+// @Produce      json
+// @Security     CookieAuth
+// @Param        body  body  object{amount=number}  true  "Deposit amount in VND"
+// @Success      201  {object}  map[string]interface{}
+// @Failure      400  {object}  map[string]interface{}
+// @Router       /wallet/deposit [post]
 func (h *WalletHandler) CreateDeposit(c *gin.Context) {
 	var req struct {
 		Amount float64 `json:"amount" binding:"required,gt=0"`
@@ -46,6 +64,15 @@ func (h *WalletHandler) CreateDeposit(c *gin.Context) {
 	response.Created(c, deposit)
 }
 
+// Deposits godoc
+// @Summary      List deposit history
+// @Tags         wallet
+// @Produce      json
+// @Security     CookieAuth
+// @Param        page  query  int  false  "Page (default 1)"
+// @Param        size  query  int  false  "Page size (default 20, max 100)"
+// @Success      200  {object}  map[string]interface{}
+// @Router       /wallet/deposits [get]
 func (h *WalletHandler) Deposits(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
@@ -73,10 +100,18 @@ type WithdrawReq struct {
 	TwoFACode   string  `json:"twoFaCode"` // required if user has 2FA enabled
 }
 
-// Withdraw — gated by 2FA when enabled on the user account.
-// Calls auth-service via gRPC to verify TOTP. If 2FA is enabled but the
-// caller did not supply a valid code, the request is rejected before any
-// balance is touched.
+// Withdraw godoc
+// @Summary      Withdraw USDT to bank
+// @Description  Requires 2FA code if enabled. Gated by "withdraw" API-key permission.
+// @Tags         wallet
+// @Accept       json
+// @Produce      json
+// @Security     CookieAuth
+// @Param        body  body  WithdrawReq  true  "Withdrawal payload"
+// @Success      201  {object}  map[string]interface{}
+// @Failure      400  {object}  map[string]interface{}
+// @Failure      401  {object}  map[string]interface{}
+// @Router       /wallet/withdraw [post]
 func (h *WalletHandler) Withdraw(c *gin.Context) {
 	var req WithdrawReq
 	if err := c.ShouldBindJSON(&req); err != nil {

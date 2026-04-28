@@ -34,6 +34,17 @@ type PlaceOrderReq struct {
 	Amount    float64 `json:"amount" binding:"required,gt=0"`
 }
 
+// PlaceOrder godoc
+// @Summary      Place a spot order
+// @Description  Supports MARKET, LIMIT, STOP_LIMIT order types
+// @Tags         trading
+// @Accept       json
+// @Produce      json
+// @Security     CookieAuth
+// @Param        body  body  PlaceOrderReq  true  "Order payload"
+// @Success      201  {object}  map[string]interface{}
+// @Failure      400  {object}  map[string]interface{}
+// @Router       /trading/orders [post]
 func (h *TradingHandler) PlaceOrder(c *gin.Context) {
 	var req PlaceOrderReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -115,6 +126,15 @@ func (h *TradingHandler) PlaceOrder(c *gin.Context) {
 	response.Created(c, order)
 }
 
+// CancelOrder godoc
+// @Summary      Cancel an open order
+// @Tags         trading
+// @Produce      json
+// @Security     CookieAuth
+// @Param        id   path  int  true  "Order ID"
+// @Success      200  {object}  map[string]interface{}
+// @Failure      404  {object}  map[string]interface{}
+// @Router       /trading/orders/{id} [delete]
 func (h *TradingHandler) CancelOrder(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 64)
@@ -143,6 +163,16 @@ func (h *TradingHandler) CancelOrder(c *gin.Context) {
 	response.OK(c, order)
 }
 
+// OrderHistory godoc
+// @Summary      Get order history
+// @Tags         trading
+// @Produce      json
+// @Security     CookieAuth
+// @Param        page    query  int     false "Page (default 1)"
+// @Param        size    query  int     false "Page size (default 20)"
+// @Param        status  query  string  false "Filter by status: OPEN FILLED CANCELLED"
+// @Success      200  {object}  map[string]interface{}
+// @Router       /trading/orders [get]
 func (h *TradingHandler) OrderHistory(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
@@ -163,6 +193,13 @@ func (h *TradingHandler) OrderHistory(c *gin.Context) {
 	response.Page(c, orders, total, page, size)
 }
 
+// OpenOrders godoc
+// @Summary      Get open orders
+// @Tags         trading
+// @Produce      json
+// @Security     CookieAuth
+// @Success      200  {array}   map[string]interface{}
+// @Router       /trading/orders/open [get]
 func (h *TradingHandler) OpenOrders(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	orders, err := h.orders.GetOpenOrders(userID)

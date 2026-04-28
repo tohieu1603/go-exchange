@@ -1,3 +1,9 @@
+// @title           Notification Service API
+// @version         1.0
+// @description     User notifications: list, mark read, unread count
+// @host            localhost:8086
+// @BasePath        /api
+
 package main
 
 import (
@@ -24,6 +30,10 @@ import (
 	"github.com/redis/go-redis/v9"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
+	_ "github.com/cryptox/notification-service/cmd/docs"
 )
 
 func getEnv(key, fallback string) string {
@@ -89,6 +99,7 @@ func main() {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery(), middleware.CORS(), otelgin.Middleware("notification"), metrics.GinMiddleware("notification"), middleware.WAF())
 	r.GET("/metrics", metrics.Handler())
+	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	auth := r.Group("/api/notifications", middleware.JWTAuth(cfg.JWTSecret))
 	auth.GET("", notifH.List)

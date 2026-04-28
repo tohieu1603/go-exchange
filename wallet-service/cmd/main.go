@@ -1,3 +1,9 @@
+// @title           Wallet Service API
+// @version         1.0
+// @description     Wallet balances, deposits, withdrawals
+// @host            localhost:8082
+// @BasePath        /api
+
 package main
 
 import (
@@ -29,6 +35,10 @@ import (
 	"google.golang.org/grpc"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
+	_ "github.com/cryptox/wallet-service/cmd/docs"
 )
 
 func main() {
@@ -190,6 +200,7 @@ func main() {
 	r := gin.New()
 	r.Use(gin.Recovery(), otelgin.Middleware("wallet"), metrics.GinMiddleware("wallet"), middleware.WAF())
 	r.GET("/metrics", metrics.Handler())
+	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	auth := r.Group("/api/wallet", middleware.JWTAuth(cfg.JWTSecret))
 	{

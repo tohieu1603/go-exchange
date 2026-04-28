@@ -1,0 +1,140 @@
+basePath: /api
+definitions:
+  handler.WithdrawReq:
+    properties:
+      accountName:
+        type: string
+      amountUsdt:
+        type: number
+      bankAccount:
+        type: string
+      bankCode:
+        type: string
+      twoFaCode:
+        description: required if user has 2FA enabled
+        type: string
+    required:
+    - accountName
+    - amountUsdt
+    - bankAccount
+    - bankCode
+    type: object
+host: localhost:8082
+info:
+  contact: {}
+  description: Wallet balances, deposits, withdrawals
+  title: Wallet Service API
+  version: "1.0"
+paths:
+  /wallet/balances:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Get wallet balances
+      tags:
+      - wallet
+  /wallet/deposit:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Deposit amount in VND
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            amount:
+              type: number
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Initiate a VND deposit
+      tags:
+      - wallet
+  /wallet/deposits:
+    get:
+      parameters:
+      - description: Page (default 1)
+        in: query
+        name: page
+        type: integer
+      - description: Page size (default 20, max 100)
+        in: query
+        name: size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: List deposit history
+      tags:
+      - wallet
+  /wallet/withdraw:
+    post:
+      consumes:
+      - application/json
+      description: Requires 2FA code if enabled. Gated by "withdraw" API-key permission.
+      parameters:
+      - description: Withdrawal payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.WithdrawReq'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Withdraw USDT to bank
+      tags:
+      - wallet
+swagger: "2.0"

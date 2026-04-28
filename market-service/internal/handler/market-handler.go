@@ -20,13 +20,25 @@ func NewMarketHandler(feed *service.PriceFeed, aggregator *service.CandleAggrega
 	return &MarketHandler{feed: feed, aggregator: aggregator, rdb: rdb}
 }
 
+// Tickers godoc
+// @Summary      Get all market tickers
+// @Tags         market
+// @Produce      json
+// @Success      200  {object}  map[string]interface{}
+// @Router       /market/tickers [get]
 func (h *MarketHandler) Tickers(c *gin.Context) {
 	tickers := h.feed.GetAllTickers()
 	response.OK(c, tickers)
 }
 
-// Depth reads order book depth from Redis (published by trading-service)
-// Returns empty depth if not available yet
+// Depth godoc
+// @Summary      Get order book depth for a pair
+// @Tags         market
+// @Produce      json
+// @Param        pair   path   string  true  "Trading pair e.g. BTC_USDT"
+// @Param        limit  query  int     false "Depth levels (default 20, max 100)"
+// @Success      200  {object}  map[string]interface{}
+// @Router       /market/depth/{pair} [get]
 func (h *MarketHandler) Depth(c *gin.Context) {
 	pair := c.Param("pair")
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
@@ -71,6 +83,14 @@ func (h *MarketHandler) Depth(c *gin.Context) {
 	response.OK(c, depth)
 }
 
+// Trades godoc
+// @Summary      Get recent trades for a pair
+// @Tags         market
+// @Produce      json
+// @Param        pair   path   string  true  "Trading pair e.g. BTC_USDT"
+// @Param        limit  query  int     false "Max results (default 50, max 200)"
+// @Success      200  {array}   map[string]interface{}
+// @Router       /market/trades/{pair} [get]
 func (h *MarketHandler) Trades(c *gin.Context) {
 	pair := c.Param("pair")
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
@@ -95,6 +115,15 @@ func (h *MarketHandler) Trades(c *gin.Context) {
 	response.OK(c, trades)
 }
 
+// Candles godoc
+// @Summary      Get OHLCV candles for a pair
+// @Tags         market
+// @Produce      json
+// @Param        pair      path   string  true  "Trading pair e.g. BTC_USDT"
+// @Param        interval  query  string  false "Candle interval: 1m 5m 15m 1h 4h 1d (default 1h)"
+// @Param        limit     query  int     false "Max candles (default 500, max 1500)"
+// @Success      200  {array}   map[string]interface{}
+// @Router       /market/candles/{pair} [get]
 func (h *MarketHandler) Candles(c *gin.Context) {
 	if h.aggregator == nil {
 		response.OK(c, []interface{}{})
@@ -114,7 +143,12 @@ func (h *MarketHandler) Candles(c *gin.Context) {
 	response.OK(c, candles)
 }
 
-// ExchangeRate returns current VND/USDT exchange rate
+// ExchangeRate godoc
+// @Summary      Get VND/USDT exchange rate
+// @Tags         market
+// @Produce      json
+// @Success      200  {object}  map[string]interface{}
+// @Router       /market/rate [get]
 func (h *MarketHandler) ExchangeRate(c *gin.Context) {
 	rate := service.GetVNDRate()
 	response.OK(c, gin.H{"vndPerUsdt": rate})

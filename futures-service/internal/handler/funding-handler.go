@@ -17,7 +17,14 @@ func NewFundingHandler(svc *service.FundingService) *FundingHandler {
 	return &FundingHandler{svc: svc}
 }
 
-// Latest funding rate for a pair (public).
+// Latest godoc
+// @Summary      Latest funding rate for a pair
+// @Tags         funding
+// @Produce      json
+// @Param        pair  path  string  true  "Perpetual pair e.g. BTC_USDT"
+// @Success      200  {object}  map[string]interface{}
+// @Failure      404  {object}  map[string]interface{}
+// @Router       /futures/funding/{pair}/latest [get]
 func (h *FundingHandler) Latest(c *gin.Context) {
 	pair := c.Param("pair")
 	rate, err := h.svc.LatestRate(pair)

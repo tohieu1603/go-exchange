@@ -1,0 +1,137 @@
+basePath: /api
+definitions:
+  handler.PlaceOrderReq:
+    properties:
+      amount:
+        type: number
+      pair:
+        type: string
+      price:
+        type: number
+      side:
+        enum:
+        - BUY
+        - SELL
+        type: string
+      stopPrice:
+        type: number
+      type:
+        enum:
+        - MARKET
+        - LIMIT
+        - STOP_LIMIT
+        type: string
+    required:
+    - amount
+    - pair
+    - side
+    - type
+    type: object
+host: localhost:8084
+info:
+  contact: {}
+  description: Spot order placement, cancellation, and order history
+  title: Trading Service API
+  version: "1.0"
+paths:
+  /trading/orders:
+    get:
+      parameters:
+      - description: Page (default 1)
+        in: query
+        name: page
+        type: integer
+      - description: Page size (default 20)
+        in: query
+        name: size
+        type: integer
+      - description: 'Filter by status: OPEN FILLED CANCELLED'
+        in: query
+        name: status
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Get order history
+      tags:
+      - trading
+    post:
+      consumes:
+      - application/json
+      description: Supports MARKET, LIMIT, STOP_LIMIT order types
+      parameters:
+      - description: Order payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handler.PlaceOrderReq'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Place a spot order
+      tags:
+      - trading
+  /trading/orders/{id}:
+    delete:
+      parameters:
+      - description: Order ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Cancel an open order
+      tags:
+      - trading
+  /trading/orders/open:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - CookieAuth: []
+      summary: Get open orders
+      tags:
+      - trading
+swagger: "2.0"

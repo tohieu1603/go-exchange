@@ -1,3 +1,9 @@
+// @title           Futures Service API
+// @version         1.0
+// @description     Perpetual futures: positions, funding rates, TP/SL
+// @host            localhost:8085
+// @BasePath        /api
+
 package main
 
 import (
@@ -26,6 +32,10 @@ import (
 	"github.com/redis/go-redis/v9"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
+	_ "github.com/cryptox/futures-service/cmd/docs"
 )
 
 func getEnv(key, fallback string) string {
@@ -39,7 +49,7 @@ func main() {
 	cfg := config.LoadBase()
 	tracingShutdown := tracing.Init("futures")
 	defer tracingShutdown(context.Background())
-	httpPort := getEnv("HTTP_PORT", "8084")
+	httpPort := getEnv("HTTP_PORT", "8085")
 	walletGRPCAddr := getEnv("WALLET_GRPC_ADDR", "localhost:9082")
 	marketGRPCAddr := getEnv("MARKET_GRPC_ADDR", "localhost:9083")
 
@@ -86,6 +96,7 @@ func main() {
 	// Handlers
 	futuresHandler := handler.NewFuturesHandler(futuresSvc)
 	fundingHandler := handler.NewFundingHandler(fundingSvc)
+	adminHandler := handler.NewAdminHandler(futuresSvc)
 
 	// CQRS projector: this service owns futures_positions table
 	bus.Subscribe(eventbus.TopicPositionChanged, func(_ context.Context, id string, data []byte) error {
@@ -115,6 +126,7 @@ func main() {
 	r := gin.New()
 	r.Use(gin.Recovery(), otelgin.Middleware("futures"), metrics.GinMiddleware("futures"), middleware.WAF())
 	r.GET("/metrics", metrics.Handler())
+	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	// Public funding rate endpoints — anyone can read.
 	pub := r.Group("/api/futures")
@@ -129,6 +141,13 @@ func main() {
 	api.GET("/positions", futuresHandler.Positions)
 	api.GET("/positions/open", futuresHandler.OpenPositions)
 	api.GET("/funding/me", fundingHandler.MyHistory)
+
+	// Admin — view any user's positions. Gateway routes
+	// /api/admin/users/:id/positions to this service via a special-case match.
+	admin := r.Group("/api/admin", middleware.JWTAuth(cfg.JWTSecret), middleware.AdminOnly())
+	{
+		admin.GET("/users/:id/positions", adminHandler.UserPositions)
+	}
 
 	srv := &http.Server{
 		Addr:    ":" + httpPort,
