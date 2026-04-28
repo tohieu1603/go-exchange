@@ -109,6 +109,79 @@ for i in $(seq 1 "$COUNT"); do
   green "  ✓ user_id=$USER_ID email=$EMAIL"
 done
 
+# ── Market-maker grid ────────────────────────────────────────────────────
+# Real exchanges keep liquidity providers running 24/7 to maintain a tight
+# book. For dev parity we one-shot a grid of LIMIT orders from seed1 on the
+# top pairs so the order book renders depth immediately. Spacing is 0.1% per
+# level for the inner band, then 0.5% step out — same shape Binance shows.
+header "Seeding market-maker orders (LIMIT grid around mid price)"
+
+MM_PAIRS=("BTC_USDT" "ETH_USDT")
+MM_AMOUNT="0.001"                # per-level size; 30 levels × 0.001 BTC ≈ 0.03 BTC ≈ 2.3K USDT locked
+MM_LEVELS_TIGHT=10               # 0.1% .. 1% (10 levels)
+MM_LEVELS_WIDE=5                 # 1.5% .. 3.5% (5 levels)
+MM_COOKIE="/tmp/mm-cookies.txt"
+rm -f "$MM_COOKIE"
+
+# Login seed1 as MM. Cookies persisted to $MM_COOKIE for subsequent POSTs.
+curl -sS -c "$MM_COOKIE" -X POST "$BASE/api/auth/login" \
+  -H "Content-Type: application/json" \
+  -d "{\"email\":\"seed1@example.com\",\"password\":\"$PASS\"}" >/dev/null 2>&1
+
+place_grid() {
+  local pair=$1
+  local symbol=${pair%_*}
+  # Pull mark price from /market/tickers (public, no auth needed).
+  local mid
+  mid=$(curl -sS "$BASE/api/market/tickers" | python3 -c "
+import sys, json
+d = json.load(sys.stdin).get('data', [])
+for t in d:
+    if t.get('pair') == '$pair':
+        print(t['price']); break" 2>/dev/null)
+
+  if [[ -z "$mid" || "$mid" == "0" ]]; then
+    red "  [$pair] no price — skipping"
+    return
+  fi
+
+  local placed=0
+  # Inner band: 0.1% step
+  for i in $(seq 1 $MM_LEVELS_TIGHT); do
+    local pct=$(python3 -c "print($i * 0.001)")
+    local bid=$(python3 -c "print(round($mid * (1 - $pct), 2))")
+    local ask=$(python3 -c "print(round($mid * (1 + $pct), 2))")
+    curl -sS -b "$MM_COOKIE" -X POST "$BASE/api/trading/orders" \
+      -H "Content-Type: application/json" \
+      -d "{\"pair\":\"$pair\",\"side\":\"BUY\",\"type\":\"LIMIT\",\"price\":$bid,\"amount\":$MM_AMOUNT}" \
+      >/dev/null 2>&1 && placed=$((placed+1))
+    curl -sS -b "$MM_COOKIE" -X POST "$BASE/api/trading/orders" \
+      -H "Content-Type: application/json" \
+      -d "{\"pair\":\"$pair\",\"side\":\"SELL\",\"type\":\"LIMIT\",\"price\":$ask,\"amount\":$MM_AMOUNT}" \
+      >/dev/null 2>&1 && placed=$((placed+1))
+  done
+  # Outer band: 0.5% step starting at 1.5%
+  for i in $(seq 1 $MM_LEVELS_WIDE); do
+    local pct=$(python3 -c "print(0.01 + $i * 0.005)")
+    local bid=$(python3 -c "print(round($mid * (1 - $pct), 2))")
+    local ask=$(python3 -c "print(round($mid * (1 + $pct), 2))")
+    curl -sS -b "$MM_COOKIE" -X POST "$BASE/api/trading/orders" \
+      -H "Content-Type: application/json" \
+      -d "{\"pair\":\"$pair\",\"side\":\"BUY\",\"type\":\"LIMIT\",\"price\":$bid,\"amount\":$MM_AMOUNT}" \
+      >/dev/null 2>&1 && placed=$((placed+1))
+    curl -sS -b "$MM_COOKIE" -X POST "$BASE/api/trading/orders" \
+      -H "Content-Type: application/json" \
+      -d "{\"pair\":\"$pair\",\"side\":\"SELL\",\"type\":\"LIMIT\",\"price\":$ask,\"amount\":$MM_AMOUNT}" \
+      >/dev/null 2>&1 && placed=$((placed+1))
+  done
+  green "  ✓ $pair @ $mid → $placed orders ($symbol grid ±0.1%..3.5%)"
+}
+
+for p in "${MM_PAIRS[@]}"; do
+  place_grid "$p"
+done
+rm -f "$MM_COOKIE"
+
 # Pretty table
 header "Seeded credentials"
 printf "%-4s %-22s %-16s %-13s %-9s %-6s\n" "ID" "EMAIL" "PASSWORD" "BALANCE" "KYC" "ROLE"
@@ -121,4 +194,6 @@ done
 green "
 Done. Login any account at http://localhost:3001/auth/login
 - Admin user has full /admin/* access (sidebar visible after login)
-- Regular users have KYC verified + 10K USDT — can place orders immediately"
+- Regular users have KYC verified + 10K USDT — can place orders immediately
+- seed1 is also acting as the dev market-maker; its 30 LIMIT orders per pair
+  populate the order book. Re-run this script anytime to top them up."
