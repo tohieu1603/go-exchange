@@ -2,6 +2,8 @@ package handler
 
 import (
 	"fmt"
+	"math"
+	"os"
 	"strconv"
 	"strings"
 
@@ -11,6 +13,18 @@ import (
 	"github.com/cryptox/wallet-service/internal/service"
 	"github.com/gin-gonic/gin"
 )
+
+// adjustMaxAmount caps a single admin balance adjustment so a fat-finger
+// can't move millions in one click. Default 100k; override via env
+// ADMIN_ADJUST_MAX_AMOUNT (in the same denomination as the wallet, eg USDT).
+// Set to 0 or negative to disable.
+func adjustMaxAmount() float64 {
+	v, _ := strconv.ParseFloat(os.Getenv("ADMIN_ADJUST_MAX_AMOUNT"), 64)
+	if v == 0 {
+		return 100000
+	}
+	return v
+}
 
 // AdminWalletHandler handles admin wallet endpoints.
 type AdminWalletHandler struct {
@@ -76,6 +90,13 @@ func (h *AdminWalletHandler) AdjustBalance(c *gin.Context) {
 		return
 	}
 
+	if cap := adjustMaxAmount(); cap > 0 && math.Abs(body.Amount) > cap {
+		h.publishAudit(c, userID, "admin.balance.adjust", "failure",
+			fmt.Sprintf("currency=%s amount=%.4f reason=%q err=exceeds-cap(%.0f)", currency, body.Amount, body.Reason, cap))
+		response.Error(c, 400, fmt.Sprintf("amount exceeds cap (%.0f)", cap))
+		return
+	}
+
 	if err := h.wallet.UpdateBalanceRedis(c.Request.Context(), userID, currency, body.Amount); err != nil {
 		h.publishAudit(c, userID, "admin.balance.adjust", "failure",
 			fmt.Sprintf("currency=%s amount=%.4f reason=%q err=%s", currency, body.Amount, body.Reason, err.Error()))
@@ -85,6 +106,85 @@ func (h *AdminWalletHandler) AdjustBalance(c *gin.Context) {
 	h.publishAudit(c, userID, "admin.balance.adjust", "success",
 		fmt.Sprintf("currency=%s amount=%+.4f reason=%q", currency, body.Amount, body.Reason))
 	response.OK(c, gin.H{"message": "balance adjusted"})
+}
+
+// AdjustBalanceBatch applies multiple adjustments. Each row is independent —
+// partial failure is reported per row but successful rows commit. Reuses
+// cap + audit semantics from the single-row endpoint.
+//
+// POST /api/admin/users/:id/wallets/adjust-batch
+// Body: { items: [{ currency, amount, reason }, ...] }
+func (h *AdminWalletHandler) AdjustBalanceBatch(c *gin.Context) {
+	uid64, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		response.Error(c, 400, "invalid user id")
+		return
+	}
+	userID := uint(uid64)
+
+	var body struct {
+		Items []struct {
+			Currency string  `json:"currency"`
+			Amount   float64 `json:"amount"`
+			Reason   string  `json:"reason"`
+		} `json:"items"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	if len(body.Items) == 0 {
+		response.Error(c, 400, "items required")
+		return
+	}
+	if len(body.Items) > 20 {
+		response.Error(c, 400, "max 20 items per batch")
+		return
+	}
+
+	maxAmt := adjustMaxAmount()
+	results := make([]gin.H, 0, len(body.Items))
+	successCount := 0
+
+	for i, item := range body.Items {
+		currency := strings.ToUpper(strings.TrimSpace(item.Currency))
+		reason := strings.TrimSpace(item.Reason)
+		row := gin.H{"index": i, "currency": currency, "amount": item.Amount}
+
+		var rowErr string
+		switch {
+		case currency == "":
+			rowErr = "currency required"
+		case item.Amount == 0:
+			rowErr = "amount cannot be zero"
+		case reason == "":
+			rowErr = "reason required"
+		case maxAmt > 0 && math.Abs(item.Amount) > maxAmt:
+			rowErr = fmt.Sprintf("exceeds cap (%.0f)", maxAmt)
+		default:
+			if err := h.wallet.UpdateBalanceRedis(c.Request.Context(), userID, currency, item.Amount); err != nil {
+				rowErr = err.Error()
+			}
+		}
+
+		if rowErr != "" {
+			row["error"] = rowErr
+			h.publishAudit(c, userID, "admin.balance.adjust", "failure",
+				fmt.Sprintf("currency=%s amount=%.4f reason=%q err=%s (batch)", currency, item.Amount, reason, rowErr))
+		} else {
+			row["ok"] = true
+			successCount++
+			h.publishAudit(c, userID, "admin.balance.adjust", "success",
+				fmt.Sprintf("currency=%s amount=%+.4f reason=%q (batch)", currency, item.Amount, reason))
+		}
+		results = append(results, row)
+	}
+
+	response.OK(c, gin.H{
+		"applied": successCount,
+		"total":   len(body.Items),
+		"results": results,
+	})
 }
 
 func adminPageParams(c *gin.Context) (int, int) {

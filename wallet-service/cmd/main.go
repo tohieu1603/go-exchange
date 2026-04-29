@@ -217,6 +217,7 @@ func main() {
 	{
 		admin.GET("/users/:id/wallets", adminH.UserWallets)
 		admin.POST("/users/:id/wallets/:currency/adjust", adminH.AdjustBalance)
+		admin.POST("/users/:id/wallets/adjust-batch", adminH.AdjustBalanceBatch)
 		admin.GET("/deposits", adminH.Deposits)
 		admin.POST("/deposits/:id/confirm", adminH.ConfirmDeposit)
 		admin.POST("/deposits/:id/reject", adminH.RejectDeposit)
