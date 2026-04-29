@@ -147,6 +147,7 @@ func main() {
 	admin := r.Group("/api/admin", middleware.JWTAuth(cfg.JWTSecret), middleware.AdminOnly())
 	{
 		admin.GET("/users/:id/positions", adminHandler.UserPositions)
+		admin.POST("/users/:id/positions/:positionId/close", adminHandler.CloseUserPosition)
 	}
 
 	srv := &http.Server{

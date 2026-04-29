@@ -46,3 +46,26 @@ func (h *AdminHandler) UserOrders(c *gin.Context) {
 	}
 	response.Page(c, orders, total, page, size)
 }
+
+// CancelUserOrder force-cancels an order on behalf of a user. The order
+// must belong to that user; the underlying service still scopes by userID
+// so an admin can't cancel someone else's order via id-collision.
+// POST /api/admin/users/:id/orders/:orderId/cancel
+func (h *AdminHandler) CancelUserOrder(c *gin.Context) {
+	uid64, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		response.Error(c, 400, "invalid user id")
+		return
+	}
+	oid64, err := strconv.ParseUint(c.Param("orderId"), 10, 64)
+	if err != nil {
+		response.Error(c, 400, "invalid order id")
+		return
+	}
+	order, err := h.orders.CancelOrder(c.Request.Context(), uint(uid64), uint(oid64))
+	if err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	response.OK(c, order)
+}

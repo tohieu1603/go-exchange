@@ -163,14 +163,17 @@ func main() {
 		// Each sub-resource is short-circuited to its owning service rather than
 		// the default `/api/admin/` → auth-service mapping.
 		if strings.HasPrefix(path, "/api/admin/users/") {
+			// Use Contains so deeper sub-resources (e.g. cancel/close action
+			// endpoints under /orders/:id/cancel, /positions/:id/close) all
+			// route to the same owning service as the listing endpoint.
 			switch {
-			case strings.HasSuffix(path, "/wallets"):
+			case strings.Contains(path, "/wallets"):
 				matched = route{walletURL, true}
 				found = true
-			case strings.HasSuffix(path, "/orders"):
+			case strings.Contains(path, "/orders"):
 				matched = route{tradingURL, true}
 				found = true
-			case strings.HasSuffix(path, "/positions"):
+			case strings.Contains(path, "/positions"):
 				matched = route{futuresURL, true}
 				found = true
 			}

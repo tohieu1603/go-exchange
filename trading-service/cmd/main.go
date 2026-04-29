@@ -142,6 +142,7 @@ func main() {
 	admin := r.Group("/api/admin", middleware.JWTAuth(cfg.JWTSecret), middleware.AdminOnly())
 	{
 		admin.GET("/users/:id/orders", adminHandler.UserOrders)
+		admin.POST("/users/:id/orders/:orderId/cancel", adminHandler.CancelUserOrder)
 	}
 
 	srv := &http.Server{Addr: ":" + httpPort, Handler: r}
