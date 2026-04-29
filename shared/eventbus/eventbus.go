@@ -21,6 +21,10 @@ const (
 	TopicPriceUpdated        = "price.updated"
 	TopicWSBroadcast         = "ws.broadcast"
 	TopicAuditLogged         = "audit.logged"
+	// Cross-service audit pipeline. Other services emit AuditRequestEvent on
+	// this topic; auth-service is the sole consumer and persists the row in
+	// its audit_logs table (which then re-emits TopicAuditLogged for ES).
+	TopicAuditRequest        = "audit.request"
 )
 
 // Handler processes a raw event payload.

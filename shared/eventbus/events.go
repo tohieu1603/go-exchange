@@ -60,6 +60,18 @@ type UserRegisteredEvent struct {
 	ClientIP     string `json:"clientIp,omitempty"`
 }
 
+// AuditRequestEvent is published by non-auth services (wallet, futures,
+// trading, …) when they want to persist an audit log row. Auth-service
+// owns the audit_logs table and is the sole consumer of this topic.
+type AuditRequestEvent struct {
+	UserID  uint   `json:"userId"`            // subject of the action (the affected end-user)
+	Email   string `json:"email,omitempty"`   // optional snapshot for searchability
+	Action  string `json:"action"`            // dotted (eg "admin.order.cancel", "admin.balance.adjust")
+	Outcome string `json:"outcome"`           // "success" | "failure"
+	IP      string `json:"ip,omitempty"`      // admin's source IP
+	Detail  string `json:"detail,omitempty"`  // freeform JSON or human-readable context
+}
+
 // AuditLogEvent mirrors a persisted audit row, published to event bus so
 // es-indexer can fan-out to Elasticsearch for Kibana dashboards.
 type AuditLogEvent struct {

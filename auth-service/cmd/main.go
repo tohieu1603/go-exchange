@@ -257,12 +257,28 @@ func main() {
 		referralSvc.BindOnRegister(ev.UserID, ev.ReferralCode)
 		return nil
 	})
+	// Consumer: audit.request → persist via AuditLogService. Other services
+	// (wallet, futures, trading) emit on this topic when an admin acts on a
+	// user; we own the audit_logs table and re-publish audit.logged for ES.
+	bus.Subscribe(eventbus.TopicAuditRequest, func(_ context.Context, _ string, data []byte) error {
+		ev, err := eventbus.Unmarshal[eventbus.AuditRequestEvent](data)
+		if err != nil {
+			return nil
+		}
+		if ev.Outcome == "success" {
+			auditSvc.Success(ev.UserID, ev.Email, ev.Action, ev.IP, "", ev.Detail)
+		} else {
+			auditSvc.Failure(ev.UserID, ev.Email, ev.Action, ev.IP, "", ev.Detail)
+		}
+		return nil
+	})
 
 	consumerCtx, consumerCancel := context.WithCancel(context.Background())
 	defer consumerCancel()
 	bus.StartConsumer(consumerCtx, eventbus.TopicTradeExecuted, "auth-detector", "worker-1")
 	bus.StartConsumer(consumerCtx, eventbus.TopicUserRegistered, "auth-referral", "worker-1")
-	log.Println("[auth] consumers started: trade.executed, user.registered")
+	bus.StartConsumer(consumerCtx, eventbus.TopicAuditRequest, "auth-audit-ingest", "worker-1")
+	log.Println("[auth] consumers started: trade.executed, user.registered, audit.request")
 
 	// Periodic cleanup of expired refresh tokens.
 	go func() {

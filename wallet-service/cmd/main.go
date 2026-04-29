@@ -194,7 +194,7 @@ func main() {
 		getEnv("SEPAY_API_KEY", ""),
 		getEnv("SEPAY_SECRET_KEY", ""),
 	)
-	adminH := handler.NewAdminWalletHandler(walletSvc)
+	adminH := handler.NewAdminWalletHandler(walletSvc, bus)
 
 	// HTTP server
 	r := gin.New()
@@ -216,6 +216,7 @@ func main() {
 	admin := r.Group("/api/admin", middleware.JWTAuth(cfg.JWTSecret), middleware.AdminOnly())
 	{
 		admin.GET("/users/:id/wallets", adminH.UserWallets)
+		admin.POST("/users/:id/wallets/:currency/adjust", adminH.AdjustBalance)
 		admin.GET("/deposits", adminH.Deposits)
 		admin.POST("/deposits/:id/confirm", adminH.ConfirmDeposit)
 		admin.POST("/deposits/:id/reject", adminH.RejectDeposit)

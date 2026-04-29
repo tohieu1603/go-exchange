@@ -96,7 +96,7 @@ func main() {
 	// Handlers
 	futuresHandler := handler.NewFuturesHandler(futuresSvc)
 	fundingHandler := handler.NewFundingHandler(fundingSvc)
-	adminHandler := handler.NewAdminHandler(futuresSvc)
+	adminHandler := handler.NewAdminHandler(futuresSvc, bus)
 
 	// CQRS projector: this service owns futures_positions table
 	bus.Subscribe(eventbus.TopicPositionChanged, func(_ context.Context, id string, data []byte) error {

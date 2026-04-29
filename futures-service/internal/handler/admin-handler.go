@@ -1,9 +1,12 @@
 package handler
 
 import (
+	"fmt"
 	"strconv"
 
 	"github.com/cryptox/futures-service/internal/service"
+	"github.com/cryptox/shared/eventbus"
+	"github.com/cryptox/shared/middleware"
 	"github.com/cryptox/shared/response"
 	"github.com/gin-gonic/gin"
 )
@@ -12,10 +15,28 @@ import (
 // JWT auth + AdminOnly middleware are applied at the route registration level.
 type AdminHandler struct {
 	futures *service.FuturesService
+	bus     eventbus.EventPublisher
 }
 
-func NewAdminHandler(futures *service.FuturesService) *AdminHandler {
-	return &AdminHandler{futures: futures}
+func NewAdminHandler(futures *service.FuturesService, bus eventbus.EventPublisher) *AdminHandler {
+	return &AdminHandler{futures: futures, bus: bus}
+}
+
+// publishAudit fire-and-forgets an admin-action audit row to auth-service
+// via the audit.request topic. Subject = the affected end-user.
+func (h *AdminHandler) publishAudit(c *gin.Context, subjectUserID uint, action, outcome, detail string) {
+	if h.bus == nil {
+		return
+	}
+	adminID := middleware.GetUserID(c)
+	full := fmt.Sprintf("admin=%d %s", adminID, detail)
+	_ = h.bus.Publish(c.Request.Context(), eventbus.TopicAuditRequest, eventbus.AuditRequestEvent{
+		UserID:  subjectUserID,
+		Action:  action,
+		Outcome: outcome,
+		IP:      c.ClientIP(),
+		Detail:  full,
+	})
 }
 
 // UserPositions returns positions for an arbitrary user.
@@ -56,8 +77,12 @@ func (h *AdminHandler) CloseUserPosition(c *gin.Context) {
 	}
 	pos, err := h.futures.ClosePosition(uint(uid64), uint(pid64))
 	if err != nil {
+		h.publishAudit(c, uint(uid64), "admin.position.close", "failure",
+			fmt.Sprintf("positionId=%d err=%s", pid64, err.Error()))
 		response.Error(c, 400, err.Error())
 		return
 	}
+	h.publishAudit(c, uint(uid64), "admin.position.close", "success",
+		fmt.Sprintf("positionId=%d pair=%s side=%s pnl=%.4f", pid64, pos.Pair, pos.Side, pos.UnrealizedPnL))
 	response.OK(c, pos)
 }

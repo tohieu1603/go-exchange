@@ -119,7 +119,7 @@ func main() {
 
 	// Handlers
 	tradingHandler := handler.NewTradingHandler(matchingEngine, balCache, locker, walletClient, orderSvc)
-	adminHandler := handler.NewAdminHandler(orderSvc)
+	adminHandler := handler.NewAdminHandler(orderSvc, bus)
 
 	// HTTP router
 	r := gin.New()

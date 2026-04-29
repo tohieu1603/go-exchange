@@ -1,8 +1,11 @@
 package handler
 
 import (
+	"fmt"
 	"strconv"
 
+	"github.com/cryptox/shared/eventbus"
+	"github.com/cryptox/shared/middleware"
 	"github.com/cryptox/shared/response"
 	"github.com/cryptox/trading-service/internal/service"
 	"github.com/gin-gonic/gin"
@@ -13,10 +16,28 @@ import (
 // (see cmd/main.go). The handler itself only validates the URL parameter.
 type AdminHandler struct {
 	orders *service.OrderService
+	bus    eventbus.EventPublisher
 }
 
-func NewAdminHandler(orders *service.OrderService) *AdminHandler {
-	return &AdminHandler{orders: orders}
+func NewAdminHandler(orders *service.OrderService, bus eventbus.EventPublisher) *AdminHandler {
+	return &AdminHandler{orders: orders, bus: bus}
+}
+
+// publishAudit fire-and-forgets an admin-action audit row to auth-service.
+// Subject = the affected end-user; Detail captures the acting admin id.
+func (h *AdminHandler) publishAudit(c *gin.Context, subjectUserID uint, action, outcome, detail string) {
+	if h.bus == nil {
+		return
+	}
+	adminID := middleware.GetUserID(c)
+	full := fmt.Sprintf("admin=%d %s", adminID, detail)
+	_ = h.bus.Publish(c.Request.Context(), eventbus.TopicAuditRequest, eventbus.AuditRequestEvent{
+		UserID:  subjectUserID,
+		Action:  action,
+		Outcome: outcome,
+		IP:      c.ClientIP(),
+		Detail:  full,
+	})
 }
 
 // UserOrders returns paginated order history for an arbitrary user.
@@ -64,8 +85,12 @@ func (h *AdminHandler) CancelUserOrder(c *gin.Context) {
 	}
 	order, err := h.orders.CancelOrder(c.Request.Context(), uint(uid64), uint(oid64))
 	if err != nil {
+		h.publishAudit(c, uint(uid64), "admin.order.cancel", "failure",
+			fmt.Sprintf("orderId=%d err=%s", oid64, err.Error()))
 		response.Error(c, 400, err.Error())
 		return
 	}
+	h.publishAudit(c, uint(uid64), "admin.order.cancel", "success",
+		fmt.Sprintf("orderId=%d pair=%s side=%s", oid64, order.Pair, order.Side))
 	response.OK(c, order)
 }
