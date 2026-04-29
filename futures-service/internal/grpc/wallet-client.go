@@ -44,6 +44,31 @@ func (c *WalletClient) Credit(ctx context.Context, userID uint, currency string,
 	return err
 }
 
+// Lock moves `amount` from available → locked. Used as collateral for an open
+// futures position so the user still sees the funds as theirs (in `locked`),
+// distinct from a hard `Deduct` which removes funds entirely.
+func (c *WalletClient) Lock(ctx context.Context, userID uint, currency string, amount float64) error {
+	resp, err := c.client.Lock(ctx, &walletpb.LockRequest{
+		UserId: uint64(userID), Currency: currency, Amount: amount,
+	})
+	if err != nil {
+		return err
+	}
+	if !resp.Success {
+		return fmt.Errorf("insufficient balance to lock")
+	}
+	return nil
+}
+
+// Unlock moves `amount` from locked → available. Pair with Lock when a
+// position closes (whether by user, TP/SL, margin call, or liquidation).
+func (c *WalletClient) Unlock(ctx context.Context, userID uint, currency string, amount float64) error {
+	_, err := c.client.Unlock(ctx, &walletpb.UnlockRequest{
+		UserId: uint64(userID), Currency: currency, Amount: amount,
+	})
+	return err
+}
+
 // GetBalance returns (available, locked) for a user/currency.
 // Used by liquidation-engine to compute equity without touching wallet's DB.
 func (c *WalletClient) GetBalance(ctx context.Context, userID uint, currency string) (balance, locked float64, err error) {

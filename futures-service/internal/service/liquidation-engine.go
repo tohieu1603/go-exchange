@@ -186,61 +186,81 @@ func sortByPnL(list []posWithPnL) {
 func (le *LiquidationEngine) marginCallClose(positionID uint, markPrice, pnl float64) {
 	ctx := context.Background()
 	now := time.Now()
+	var capturedPos *model.FuturesPosition
+	var netPnL float64
 	txErr := le.db.Transaction(func(tx *gorm.DB) error {
 		pos, err := le.positionRepo.FindByIDForUpdate(tx, positionID, "OPEN")
 		if err != nil {
 			return err
 		}
 
-		creditAmount := pos.Margin + pnl
-		if creditAmount < 0 {
-			creditAmount = 0
+		// Cap loss at margin — user never owes from a forced close.
+		netPnL = pnl
+		if netPnL < -pos.Margin {
+			netPnL = -pos.Margin
 		}
-		// Position state mutates inside the local tx; the wallet credit is
-		// effectively-eventual via gRPC + event. If wallet call fails, the
-		// emitted balance.changed event lets ops/ audit reconcile.
+		// Store realized PnL net of open fee so UI matches wallet impact.
+		// Margin-call has no close fee (forced exit).
+		openFee := pos.Size * pos.EntryPrice * 0.0005
+		realizedPnL := netPnL - openFee
 		pos.Status = "LIQUIDATED"
 		pos.ClosedAt = &now
 		pos.MarkPrice = markPrice
-		pos.UnrealizedPnL = pnl
+		pos.UnrealizedPnL = realizedPnL
 		if err := le.positionRepo.Save(tx, pos); err != nil {
 			return err
 		}
-
-		if creditAmount > 0 {
-			if err := le.walletClient.Credit(ctx, pos.UserID, "USDT", creditAmount); err != nil {
-				log.Printf("[liquidation] wallet credit failed user=%d amt=%.4f: %v",
-					pos.UserID, creditAmount, err)
-			}
-			if le.bus != nil {
-				le.bus.Publish(ctx, eventbus.TopicBalanceChanged, eventbus.BalanceEvent{
-					UserID: pos.UserID, Currency: "USDT",
-					Delta: creditAmount, Reason: "liquidation",
-					RefID: fmt.Sprintf("position-%d", pos.ID),
-				})
-			}
-		}
-
-		le.hub.Broadcast(fmt.Sprintf("liquidation@%d", pos.UserID), map[string]interface{}{
-			"event": "MARGIN_CALL", "positionId": pos.ID, "pair": pos.Pair,
-			"side": pos.Side, "pnl": pnl, "markPrice": markPrice,
-		})
-		if le.bus != nil {
-			le.bus.Publish(ctx, eventbus.TopicNotificationCreated, eventbus.NotificationEvent{
-				UserID:  pos.UserID,
-				Type:    "MARGIN_CALL",
-				Title:   "Margin Call!",
-				Message: fmt.Sprintf("%s %s force-closed, PnL: $%+.2f", pos.Side, pos.Pair, pnl),
-				Pair:    pos.Pair,
-			})
-		}
-		log.Printf("MARGIN CALL liquidated position %d: pair=%s side=%s pnl=%.4f",
-			pos.ID, pos.Pair, pos.Side, pnl)
+		capturedPos = pos
 		return nil
 	})
-	if txErr != nil && !errors.Is(txErr, gorm.ErrRecordNotFound) {
-		log.Printf("margin call tx error for position %d: %v", positionID, txErr)
+	if txErr != nil {
+		if !errors.Is(txErr, gorm.ErrRecordNotFound) {
+			log.Printf("margin call tx error for position %d: %v", positionID, txErr)
+		}
+		return
 	}
+	if capturedPos == nil {
+		return
+	}
+	pos := capturedPos
+
+	// Settle wallet after DB commit. Failures here are logged + reconciled
+	// via the balance.changed event consumer.
+	_ = le.walletClient.Unlock(ctx, pos.UserID, "USDT", pos.Margin)
+	if netPnL > 0 {
+		if err := le.walletClient.Credit(ctx, pos.UserID, "USDT", netPnL); err != nil {
+			log.Printf("[margin-call] wallet credit failed user=%d amt=%.4f: %v",
+				pos.UserID, netPnL, err)
+		}
+	} else if netPnL < 0 {
+		if err := le.walletClient.Deduct(ctx, pos.UserID, "USDT", -netPnL); err != nil {
+			log.Printf("[margin-call] wallet deduct failed user=%d amt=%.4f: %v",
+				pos.UserID, -netPnL, err)
+		}
+	}
+	if le.bus != nil {
+		le.bus.Publish(ctx, eventbus.TopicBalanceChanged, eventbus.BalanceEvent{
+			UserID: pos.UserID, Currency: "USDT",
+			Delta: netPnL, Reason: "margin-call",
+			RefID: fmt.Sprintf("position-%d", pos.ID),
+		})
+	}
+
+	le.hub.Broadcast(fmt.Sprintf("liquidation@%d", pos.UserID), map[string]interface{}{
+		"event": "MARGIN_CALL", "positionId": pos.ID, "pair": pos.Pair,
+		"side": pos.Side, "pnl": pnl, "markPrice": markPrice,
+	})
+	if le.bus != nil {
+		le.bus.Publish(ctx, eventbus.TopicNotificationCreated, eventbus.NotificationEvent{
+			UserID:  pos.UserID,
+			Type:    "MARGIN_CALL",
+			Title:   "Margin Call!",
+			Message: fmt.Sprintf("%s %s force-closed, PnL: $%+.2f", pos.Side, pos.Pair, pnl),
+			Pair:    pos.Pair,
+		})
+	}
+	log.Printf("MARGIN CALL liquidated position %d: pair=%s side=%s pnl=%.4f",
+		pos.ID, pos.Pair, pos.Side, pnl)
 }
 
 func (le *LiquidationEngine) shouldTriggerTPSL(pos *model.FuturesPosition, markPrice float64) bool {
@@ -265,64 +285,87 @@ func (le *LiquidationEngine) shouldTriggerTPSL(pos *model.FuturesPosition, markP
 func (le *LiquidationEngine) autoClose(positionID uint, markPrice float64, reason string) {
 	ctx := context.Background()
 	now := time.Now()
+	var capturedPos *model.FuturesPosition
+	var pnl float64
 	txErr := le.db.Transaction(func(tx *gorm.DB) error {
 		pos, err := le.positionRepo.FindByIDForUpdate(tx, positionID, "OPEN")
 		if err != nil {
 			return err
 		}
 
-		pnl := pos.CalcUnrealizedPnL(markPrice)
-		creditAmount := pos.Margin + pnl
-		if creditAmount < 0 {
-			creditAmount = 0
+		pnl = pos.CalcUnrealizedPnL(markPrice)
+		// Cap loss at margin (TP/SL never owe).
+		if pnl < -pos.Margin {
+			pnl = -pos.Margin
 		}
+		// TP/SL paths charge open fee but no close fee (force-close courtesy).
+		// Store realized PnL net of open fee so UI matches wallet impact.
+		openFee := pos.Size * pos.EntryPrice * 0.0005
+		realizedPnL := pnl - openFee
 		pos.Status = "CLOSED"
 		pos.ClosedAt = &now
 		pos.MarkPrice = markPrice
-		pos.UnrealizedPnL = pnl
+		pos.UnrealizedPnL = realizedPnL
 		if err := le.positionRepo.Save(tx, pos); err != nil {
 			return err
 		}
-
-		if creditAmount > 0 {
-			if err := le.walletClient.Credit(ctx, pos.UserID, "USDT", creditAmount); err != nil {
-				log.Printf("[autoClose] wallet credit failed user=%d amt=%.4f: %v",
-					pos.UserID, creditAmount, err)
-			}
-			if le.bus != nil {
-				le.bus.Publish(ctx, eventbus.TopicBalanceChanged, eventbus.BalanceEvent{
-					UserID: pos.UserID, Currency: "USDT",
-					Delta: creditAmount, Reason: reason,
-					RefID: fmt.Sprintf("position-%d", pos.ID),
-				})
-			}
-		}
-
-		le.hub.Broadcast(fmt.Sprintf("position@%d", pos.UserID), map[string]interface{}{
-			"event": reason, "positionId": pos.ID, "pair": pos.Pair,
-			"side": pos.Side, "pnl": pnl, "markPrice": markPrice,
-		})
-		if le.bus != nil {
-			le.bus.Publish(ctx, eventbus.TopicNotificationCreated, eventbus.NotificationEvent{
-				UserID:  pos.UserID,
-				Type:    "POSITION_CLOSED",
-				Title:   reason + " Triggered",
-				Message: fmt.Sprintf("%s %s %s triggered at $%.2f, PnL: $%+.2f", pos.Side, pos.Pair, reason, markPrice, pnl),
-				Pair:    pos.Pair,
-			})
-		}
-		log.Printf("position %d %s triggered: pair=%s side=%s price=%.2f pnl=%.4f",
-			pos.ID, reason, pos.Pair, pos.Side, markPrice, pnl)
+		capturedPos = pos
 		return nil
 	})
-	if txErr != nil && !errors.Is(txErr, gorm.ErrRecordNotFound) {
-		log.Printf("%s tx error for position %d: %v", reason, positionID, txErr)
+	if txErr != nil {
+		if !errors.Is(txErr, gorm.ErrRecordNotFound) {
+			log.Printf("%s tx error for position %d: %v", reason, positionID, txErr)
+		}
+		return
 	}
+	if capturedPos == nil {
+		return
+	}
+	pos := capturedPos
+
+	// Settle wallet: unlock margin, then apply net PnL on available.
+	_ = le.walletClient.Unlock(ctx, pos.UserID, "USDT", pos.Margin)
+	if pnl > 0 {
+		if err := le.walletClient.Credit(ctx, pos.UserID, "USDT", pnl); err != nil {
+			log.Printf("[autoClose] wallet credit failed user=%d amt=%.4f: %v",
+				pos.UserID, pnl, err)
+		}
+	} else if pnl < 0 {
+		if err := le.walletClient.Deduct(ctx, pos.UserID, "USDT", -pnl); err != nil {
+			log.Printf("[autoClose] wallet deduct failed user=%d amt=%.4f: %v",
+				pos.UserID, -pnl, err)
+		}
+	}
+	if le.bus != nil {
+		le.bus.Publish(ctx, eventbus.TopicBalanceChanged, eventbus.BalanceEvent{
+			UserID: pos.UserID, Currency: "USDT",
+			Delta: pnl, Reason: reason,
+			RefID: fmt.Sprintf("position-%d", pos.ID),
+		})
+	}
+
+	le.hub.Broadcast(fmt.Sprintf("position@%d", pos.UserID), map[string]interface{}{
+		"event": reason, "positionId": pos.ID, "pair": pos.Pair,
+		"side": pos.Side, "pnl": pnl, "markPrice": markPrice,
+	})
+	if le.bus != nil {
+		le.bus.Publish(ctx, eventbus.TopicNotificationCreated, eventbus.NotificationEvent{
+			UserID:  pos.UserID,
+			Type:    "POSITION_CLOSED",
+			Title:   reason + " Triggered",
+			Message: fmt.Sprintf("%s %s %s triggered at $%.2f, PnL: $%+.2f", pos.Side, pos.Pair, reason, markPrice, pnl),
+			Pair:    pos.Pair,
+		})
+	}
+	log.Printf("position %d %s triggered: pair=%s side=%s price=%.2f pnl=%.4f",
+		pos.ID, reason, pos.Pair, pos.Side, markPrice, pnl)
 }
 
 func (le *LiquidationEngine) liquidate(positionID uint, markPrice float64) {
 	ctx := context.Background()
 	now := time.Now()
+	var capturedPos *model.FuturesPosition
+	var liquidated bool
 	txErr := le.db.Transaction(func(tx *gorm.DB) error {
 		pos, err := le.positionRepo.FindByIDForUpdate(tx, positionID, "OPEN")
 		if err != nil {
@@ -351,25 +394,49 @@ func (le *LiquidationEngine) liquidate(positionID uint, markPrice float64) {
 		if err := le.positionRepo.Save(tx, pos); err != nil {
 			return err
 		}
-
-		le.hub.Broadcast(fmt.Sprintf("liquidation@%d", pos.UserID), map[string]interface{}{
-			"positionId": pos.ID, "pair": pos.Pair, "side": pos.Side,
-			"markPrice": currentPrice, "margin": pos.Margin,
-		})
-		if le.bus != nil {
-			le.bus.Publish(ctx, eventbus.TopicNotificationCreated, eventbus.NotificationEvent{
-				UserID:  pos.UserID,
-				Type:    "POSITION_LIQUIDATED",
-				Title:   "Position Liquidated!",
-				Message: fmt.Sprintf("%s %s liquidated at $%.2f. Margin $%.2f lost.", pos.Side, pos.Pair, currentPrice, pos.Margin),
-				Pair:    pos.Pair,
-			})
-		}
-		log.Printf("position %d liquidated: pair=%s side=%s price=%.2f margin=%.2f",
-			pos.ID, pos.Pair, pos.Side, currentPrice, pos.Margin)
+		capturedPos = pos
+		liquidated = true
 		return nil
 	})
-	if txErr != nil && !errors.Is(txErr, gorm.ErrRecordNotFound) {
-		log.Printf("liquidation tx error for position %d: %v", positionID, txErr)
+	if txErr != nil {
+		if !errors.Is(txErr, gorm.ErrRecordNotFound) {
+			log.Printf("liquidation tx error for position %d: %v", positionID, txErr)
+		}
+		return
 	}
+	if !liquidated || capturedPos == nil {
+		return
+	}
+	pos := capturedPos
+
+	// Full margin loss: unlock then deduct = move margin from locked → gone.
+	// Net effect: locked decreases by margin, available unchanged.
+	_ = le.walletClient.Unlock(ctx, pos.UserID, "USDT", pos.Margin)
+	if err := le.walletClient.Deduct(ctx, pos.UserID, "USDT", pos.Margin); err != nil {
+		log.Printf("[liquidate] wallet deduct failed user=%d amt=%.4f: %v",
+			pos.UserID, pos.Margin, err)
+	}
+	if le.bus != nil {
+		le.bus.Publish(ctx, eventbus.TopicBalanceChanged, eventbus.BalanceEvent{
+			UserID: pos.UserID, Currency: "USDT",
+			Delta: -pos.Margin, Reason: "liquidation",
+			RefID: fmt.Sprintf("position-%d", pos.ID),
+		})
+	}
+
+	le.hub.Broadcast(fmt.Sprintf("liquidation@%d", pos.UserID), map[string]interface{}{
+		"positionId": pos.ID, "pair": pos.Pair, "side": pos.Side,
+		"markPrice": pos.MarkPrice, "margin": pos.Margin,
+	})
+	if le.bus != nil {
+		le.bus.Publish(ctx, eventbus.TopicNotificationCreated, eventbus.NotificationEvent{
+			UserID:  pos.UserID,
+			Type:    "POSITION_LIQUIDATED",
+			Title:   "Position Liquidated!",
+			Message: fmt.Sprintf("%s %s liquidated at $%.2f. Margin $%.2f lost.", pos.Side, pos.Pair, pos.MarkPrice, pos.Margin),
+			Pair:    pos.Pair,
+		})
+	}
+	log.Printf("position %d liquidated: pair=%s side=%s price=%.2f margin=%.2f",
+		pos.ID, pos.Pair, pos.Side, pos.MarkPrice, pos.Margin)
 }

@@ -61,7 +61,10 @@ func (s *FuturesService) getPrice(pair string) float64 {
 	return price
 }
 
-// OpenPosition: gRPC CheckBalance → gRPC Deduct (margin) → DB create position
+// OpenPosition: Lock(margin) + Deduct(fee) → DB create position.
+// Margin is locked (not deducted) so the user's `locked` balance reflects the
+// collateral — total wallet equity stays visible as available + locked.
+// Only the trading fee is a real expense.
 func (s *FuturesService) OpenPosition(userID uint, req OpenPositionReq) (*model.FuturesPosition, error) {
 	ctx := context.Background()
 
@@ -79,7 +82,12 @@ func (s *FuturesService) OpenPosition(userID uint, req OpenPositionReq) (*model.
 	if err := s.walletClient.CheckBalance(ctx, userID, "USDT", totalCost); err != nil {
 		return nil, err
 	}
-	if err := s.walletClient.Deduct(ctx, userID, "USDT", totalCost); err != nil {
+	if err := s.walletClient.Lock(ctx, userID, "USDT", margin); err != nil {
+		return nil, err
+	}
+	if err := s.walletClient.Deduct(ctx, userID, "USDT", fee); err != nil {
+		// Roll back the lock — user-visible state must stay consistent.
+		_ = s.walletClient.Unlock(ctx, userID, "USDT", margin)
 		return nil, err
 	}
 
@@ -90,8 +98,9 @@ func (s *FuturesService) OpenPosition(userID uint, req OpenPositionReq) (*model.
 		TakeProfit: req.TakeProfit, StopLoss: req.StopLoss, Status: "OPEN",
 	}
 	if err := s.positionRepo.Create(nil, pos); err != nil {
-		// Best-effort refund on DB failure
-		_ = s.walletClient.Credit(ctx, userID, "USDT", totalCost)
+		// Best-effort refund on DB failure: refund fee + unlock margin.
+		_ = s.walletClient.Credit(ctx, userID, "USDT", fee)
+		_ = s.walletClient.Unlock(ctx, userID, "USDT", margin)
 		return nil, err
 	}
 	metrics.FuturesOpenPositions.Inc()
@@ -116,11 +125,13 @@ func (s *FuturesService) OpenPosition(userID uint, req OpenPositionReq) (*model.
 	return pos, nil
 }
 
-// ClosePosition: DB SELECT FOR UPDATE → gRPC Credit (margin ± PnL)
+// ClosePosition: DB SELECT FOR UPDATE → Unlock(margin) + Credit/Deduct net PnL.
+// Net wallet effect after Unlock: balance changes by (pnl - fee).
+// If the loss exceeds margin (rare, race vs liquidator), cap loss at margin.
 func (s *FuturesService) ClosePosition(userID, positionID uint) (*model.FuturesPosition, error) {
 	ctx := context.Background()
 	var pos *model.FuturesPosition
-	var returnAmount float64
+	var pnl, fee float64
 
 	txErr := s.db.Transaction(func(tx *gorm.DB) error {
 		var err error
@@ -137,18 +148,20 @@ func (s *FuturesService) ClosePosition(userID, positionID uint) (*model.FuturesP
 			return errors.New("price unavailable")
 		}
 
-		pnl := pos.CalcUnrealizedPnL(markPrice)
-		fee := pos.Size * markPrice * 0.0005
-		returnAmount = pos.Margin + pnl - fee
-		if returnAmount < 0 {
-			returnAmount = 0
-		}
+		pnl = pos.CalcUnrealizedPnL(markPrice)
+		fee = pos.Size * markPrice * 0.0005
+		// Reconstruct open fee (rate is constant) so the realized PnL stored
+		// on the position reflects what the user actually gained/lost net of
+		// every trading cost — making the closed-position PnL column match
+		// the wallet movement.
+		openFee := pos.Size * pos.EntryPrice * 0.0005
+		realizedPnL := pnl - fee - openFee
 
 		now := time.Now()
 		pos.Status = "CLOSED"
 		pos.ClosedAt = &now
 		pos.MarkPrice = markPrice
-		pos.UnrealizedPnL = pnl
+		pos.UnrealizedPnL = realizedPnL
 		return s.positionRepo.Save(tx, pos)
 	})
 	if txErr != nil {
@@ -156,8 +169,17 @@ func (s *FuturesService) ClosePosition(userID, positionID uint) (*model.FuturesP
 	}
 	metrics.FuturesOpenPositions.Dec()
 
-	if returnAmount > 0 {
-		_ = s.walletClient.Credit(ctx, userID, "USDT", returnAmount)
+	// Settle wallet: unlock margin, then apply net PnL & fee on available.
+	// Cap net loss at margin so the user can never go negative from a close.
+	netDelta := pnl - fee
+	if netDelta < -pos.Margin {
+		netDelta = -pos.Margin
+	}
+	_ = s.walletClient.Unlock(ctx, userID, "USDT", pos.Margin)
+	if netDelta > 0 {
+		_ = s.walletClient.Credit(ctx, userID, "USDT", netDelta)
+	} else if netDelta < 0 {
+		_ = s.walletClient.Deduct(ctx, userID, "USDT", -netDelta)
 	}
 
 	s.hub.Broadcast(fmt.Sprintf("position@%d", userID), pos)
