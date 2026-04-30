@@ -1,0 +1,34 @@
+# Template — copy to /etc/systemd/system/exchange-<svc>.service and edit
+# the placeholders. Run `infra/systemd/install-units.sh` to render all 8
+# at once.
+#
+# Replace:
+#   {{SERVICE}}        — eg "auth-service"
+#   {{REPO_DIR}}       — eg "/srv/micro-exchange"
+#   {{ENV_FILE}}       — eg "/etc/exchange/auth-service.env"
+#   {{USER}}           — system user that owns REPO_DIR (eg "oceanroot")
+
+[Unit]
+Description=Micro-Exchange · {{SERVICE}}
+After=network.target postgresql.service redis.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{USER}}
+WorkingDirectory={{REPO_DIR}}/{{SERVICE}}
+EnvironmentFile={{ENV_FILE}}
+ExecStart={{REPO_DIR}}/{{SERVICE}}/bin/{{SERVICE}}
+Restart=always
+RestartSec=3
+# Limit log spam from a crash-loop so journald doesn't fill the disk.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+# Read-only system protections — these binaries don't need to write
+# outside their working directory.
+ProtectSystem=full
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,33 +1,28 @@
-// Backend CI/CD pipeline. Builds + tests every Go service in parallel,
-// then on `main` builds and pushes Docker images to Docker Hub.
+// Backend CI/CD pipeline — Micro-Exchange.
+//
+// On every push to any branch:
+//   1. go vet + go build per service (parallel, fail-fast).
+//   2. go test -race -cover per service.
+//   3. Coverage floor 2% per tested service.
+//
+// On `main` only:
+//   4. SSH into the deploy host, run infra/jenkins/exchange-deploy.sh
+//      (streamed from the Jenkins workspace via stdin so the script is
+//      version-controlled in this repo, not on the Jenkins server).
 //
 // Required Jenkins credentials:
-//   - dockerhub-credentials: Username/password (or PAT) for Docker Hub.
+//   - server-ssh-key  : SSH private key (Username with private key) for
+//                       the deploy user on $DEPLOY_HOST.
 //
-// Required Jenkins env / pipeline params (set globally or via Manage Jenkins):
-//   - DOCKERHUB_USER: Docker Hub username/org (eg "tohieu1603"). Images are
-//     tagged as ${DOCKERHUB_USER}/micro-exchange-<service>:<tag>.
-//
-// Tags pushed:
-//   - <git-short-sha>  — immutable, traceable
-//   - latest           — only on main branch
-//
-// To wire up:
-//   1. New Pipeline job → SCM = this repo → Script Path = Jenkinsfile
-//   2. Add credentials: Manage Jenkins → Credentials → Global → Add
-//      "Username with password", ID = dockerhub-credentials.
-//   3. Job parameters → string DOCKERHUB_USER (default tohieu16).
-//   4. Make sure the Jenkins agent has docker + go 1.25 (or use a Docker
-//      agent: agent { docker { image 'golang:1.25' } } — but you still need
-//      docker-in-docker for the image-build stage).
+// Wire-up:
+//   1. Manage Jenkins → Credentials → Global → Add → SSH Username with
+//      private key. ID = server-ssh-key. Username = oceanroot. Paste key.
+//   2. New Item → Pipeline → SCM = this repo → Script Path = Jenkinsfile.
+//   3. (Optional) Build Triggers → "GitHub hook trigger for GITScm polling"
+//      and add a webhook on GitHub.
 
 pipeline {
   agent any
-
-  parameters {
-    string(name: 'DOCKERHUB_USER', defaultValue: 'tohieu16',
-           description: 'Docker Hub user/org for image tags')
-  }
 
   options {
     timestamps()
@@ -37,14 +32,15 @@ pipeline {
   }
 
   environment {
-    GIT_SHA = "${env.GIT_COMMIT?.take(7) ?: 'dev'}"
-    IS_MAIN = "${env.BRANCH_NAME == 'main' || env.GIT_BRANCH == 'origin/main' || env.GIT_BRANCH == 'main'}"
+    GIT_SHA     = "${env.GIT_COMMIT?.take(7) ?: 'dev'}"
+    DEPLOY_HOST = '100.112.117.30'
+    DEPLOY_USER = 'oceanroot'
+    BRANCH_NAME = "${env.BRANCH_NAME ?: 'main'}"
   }
 
   stages {
     stage('Vet + build (Go)') {
       // Each module compiled in parallel — independent go.mod files.
-      // Failure in any one fails the build before any image is pushed.
       parallel {
         stage('shared')              { steps { sh 'cd shared && go vet ./... && go build ./...' } }
         stage('auth-service')        { steps { sh 'cd auth-service && go vet ./... && go build ./...' } }
@@ -59,9 +55,8 @@ pipeline {
     }
 
     stage('Tests') {
-      // Per-service `go test -race -cover`. The race detector catches
-      // concurrency issues in the matching engine + WS hub. Coverage
-      // numbers print per-package; failure of any service aborts.
+      // -race catches concurrency bugs in matching engine + WS hub.
+      // -coverprofile feeds the next stage's floor check.
       steps {
         sh '''
           for svc in shared auth-service wallet-service market-service trading-service futures-service notification-service gateway es-indexer; do
@@ -73,22 +68,17 @@ pipeline {
     }
 
     stage('Coverage gate') {
-      // Soft floor that grows over time. Today's totals (Apr 2026):
-      //   shared 7.8% · wallet 5.5% · futures 6.5% · trading 2.0%
-      //   auth/market/notif/gateway/es-indexer 0% (no tests yet)
-      // Floor 2% catches accidental test deletion without blocking work
-      // on untested services. RAISE this number as new tests land.
-      // Services reporting 0.0% are skipped (no tests anywhere).
-      environment {
-        COVERAGE_MIN = '2.0'
-      }
+      // Soft floor — fails the build if any *tested* service drops below
+      // the threshold. Services reporting 0% (no tests yet) are skipped.
+      // Raise this number as new tests land.
+      environment { COVERAGE_MIN = '2.0' }
       steps {
         sh '''
           set -eu
           fail=0
           for svc in shared auth-service wallet-service market-service trading-service futures-service notification-service gateway es-indexer; do
             f="${svc}/coverage.out"
-            if [ ! -s "$f" ]; then continue; fi
+            [ -s "$f" ] || continue
             pct=$(cd $svc && go tool cover -func=coverage.out | awk '/^total:/ {gsub("%","",$3); print $3}')
             if awk -v p="$pct" 'BEGIN { exit (p+0 == 0) }'; then
               echo "── $svc coverage: 0% (no tests, skipped)"
@@ -105,8 +95,10 @@ pipeline {
       }
     }
 
-    stage('Build + push Docker images') {
-      // Image build context is the repo root (Dockerfiles COPY shared/ + their own dir + go.work).
+    stage('Deploy to server') {
+      // Native-binary deploy. The script lives in the repo so it's
+      // versioned alongside the code that depends on it; we stream it
+      // over SSH stdin so no copy step is needed.
       when {
         anyOf {
           branch 'main'
@@ -114,22 +106,18 @@ pipeline {
         }
       }
       steps {
-        withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials',
-                                          usernameVariable: 'DH_USER',
-                                          passwordVariable: 'DH_PASS')]) {
+        withCredentials([sshUserPrivateKey(credentialsId: 'server-ssh-key',
+                                           keyFileVariable: 'SSH_KEY',
+                                           usernameVariable: 'SSH_USER')]) {
           sh '''
             set -eu
-            echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin
-
-            for svc in auth-service wallet-service market-service trading-service futures-service notification-service gateway es-indexer; do
-              IMAGE="${DOCKERHUB_USER}/micro-exchange-${svc}"
-              echo "── building $IMAGE ──"
-              docker build -f ${svc}/Dockerfile -t ${IMAGE}:${GIT_SHA} -t ${IMAGE}:latest .
-              docker push ${IMAGE}:${GIT_SHA}
-              docker push ${IMAGE}:latest
-            done
-
-            docker logout
+            ssh -i "$SSH_KEY" \\
+                -o StrictHostKeyChecking=no \\
+                -o UserKnownHostsFile=/dev/null \\
+                -o ConnectTimeout=10 \\
+                "$SSH_USER@$DEPLOY_HOST" \\
+                "BRANCH=$BRANCH_NAME GIT_SHA=$GIT_SHA bash -s" \\
+                < infra/jenkins/exchange-deploy.sh
           '''
         }
       }
@@ -137,12 +125,11 @@ pipeline {
   }
 
   post {
-    always {
-      // Reclaim disk on the agent — image builds accumulate fast.
-      sh 'docker image prune -f --filter "until=24h" || true'
-    }
     success {
-      echo "Pipeline OK. Images tagged ${env.GIT_SHA}${IS_MAIN == 'true' ? ' + latest (pushed to Docker Hub)' : ' (not pushed — non-main branch)'}"
+      echo "Pipeline OK. sha=${env.GIT_SHA} branch=${env.BRANCH_NAME}"
+    }
+    failure {
+      echo "Pipeline FAILED at sha ${env.GIT_SHA}"
     }
   }
 }
