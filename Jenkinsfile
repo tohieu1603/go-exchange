@@ -37,12 +37,45 @@ pipeline {
     }
 
     stage('Tests') {
+      // -race catches concurrency bugs in matching engine + WS hub +
+      // balance cache. Slows tests ~2-3× but the suite is small.
+      // -coverprofile feeds the next stage's floor check.
       steps {
         sh '''
           for svc in shared auth-service wallet-service market-service trading-service futures-service notification-service gateway es-indexer; do
             echo "── testing $svc ──"
-            ( cd $svc && go test ./... ) || exit 1
+            ( cd $svc && go test -race -cover -coverprofile=coverage.out ./... ) || exit 1
           done
+        '''
+      }
+    }
+
+    stage('Coverage gate') {
+      // Soft floor — fails build if any *tested* service drops below
+      // the threshold. Services reporting 0% (no tests yet) are skipped.
+      // Raise this number as new tests land. Today's totals (Apr 2026):
+      //   shared 11.1% · futures 6.5% · gateway 7.1% · es-indexer 13.6%
+      //   wallet 5.5% · notif 4.5% · market 3.7% · trading 2.8% · auth 2.3%
+      environment { COVERAGE_MIN = '2.0' }
+      steps {
+        sh '''
+          set -eu
+          fail=0
+          for svc in shared auth-service wallet-service market-service trading-service futures-service notification-service gateway es-indexer; do
+            f="${svc}/coverage.out"
+            [ -s "$f" ] || continue
+            pct=$(cd $svc && go tool cover -func=coverage.out | awk '/^total:/ {gsub("%","",$3); print $3}')
+            if awk -v p="$pct" 'BEGIN { exit (p+0 == 0) }'; then
+              echo "── $svc: 0% (no tests, skipped)"
+              continue
+            fi
+            echo "── $svc coverage: ${pct}% (floor ${COVERAGE_MIN}%)"
+            awk -v g="$pct" -v m="$COVERAGE_MIN" 'BEGIN { exit (g+0 < m+0) }' || {
+              echo "FAIL: $svc below coverage floor"
+              fail=1
+            }
+          done
+          [ "$fail" = "0" ]
         '''
       }
     }
