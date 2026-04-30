@@ -1,6 +1,6 @@
 # Jenkins + Docker Hub setup
 
-Pipelines: [`Jenkinsfile`](../Jenkinsfile) (this repo, backend) and `Jenkinsfile` in the frontend repo (`tohieu1603/go_exchange_fe`).
+Pipelines: [`Jenkinsfile`](../Jenkinsfile) (this repo, backend) and `Jenkinsfile` in the frontend repo (`tohieu16/go_exchange_fe`).
 
 ## What the pipeline does
 
@@ -27,7 +27,7 @@ Pipelines: [`Jenkinsfile`](../Jenkinsfile) (this repo, backend) and `Jenkinsfile
 `Manage Jenkins` → `Credentials` → `(global)` → `Add Credentials`:
 
 - **Kind**: Username with password
-- **Username**: your Docker Hub username (e.g. `tohieu1603`)
+- **Username**: your Docker Hub username (e.g. `tohieu16`)
 - **Password**: a Docker Hub **Personal Access Token** (Account Settings → Security → New Access Token, scope `Read & Write`). Avoid using your real password.
 - **ID**: `dockerhub-credentials` ← exact, both Jenkinsfiles reference this.
 
@@ -47,22 +47,22 @@ For multibranch (PR builds + main push), use **New Item → Multibranch Pipeline
 
 ### 3. (Optional) Override defaults
 
-Both Jenkinsfiles expose `DOCKERHUB_USER` as a parameter (default `tohieu1603`). Run the job with *Build with Parameters* to push under a different user/org.
+Both Jenkinsfiles expose `DOCKERHUB_USER` as a parameter (default `tohieu16`). Run the job with *Build with Parameters* to push under a different user/org.
 
 ## What ends up on Docker Hub
 
 After a green build on `main`, you get 9 images:
 
 ```
-tohieu1603/micro-exchange-auth-service:latest
-tohieu1603/micro-exchange-wallet-service:latest
-tohieu1603/micro-exchange-market-service:latest
-tohieu1603/micro-exchange-trading-service:latest
-tohieu1603/micro-exchange-futures-service:latest
-tohieu1603/micro-exchange-notification-service:latest
-tohieu1603/micro-exchange-gateway:latest
-tohieu1603/micro-exchange-es-indexer:latest
-tohieu1603/micro-exchange-frontend:latest
+tohieu16/micro-exchange-auth-service:latest
+tohieu16/micro-exchange-wallet-service:latest
+tohieu16/micro-exchange-market-service:latest
+tohieu16/micro-exchange-trading-service:latest
+tohieu16/micro-exchange-futures-service:latest
+tohieu16/micro-exchange-notification-service:latest
+tohieu16/micro-exchange-gateway:latest
+tohieu16/micro-exchange-es-indexer:latest
+tohieu16/micro-exchange-frontend:latest
 ```
 
 …each also tagged with the 7-char git SHA for rollback.
@@ -70,16 +70,16 @@ tohieu1603/micro-exchange-frontend:latest
 ## Pulling + running
 
 ```bash
-docker pull tohieu1603/micro-exchange-auth-service:latest
+docker pull tohieu16/micro-exchange-auth-service:latest
 docker run --rm -e DB_HOST=... -e JWT_SECRET=... -p 8081:8081 \
-  tohieu1603/micro-exchange-auth-service:latest
+  tohieu16/micro-exchange-auth-service:latest
 ```
 
 For the full stack, copy `docker-compose.yml` and replace each `build:` block with:
 
 ```yaml
 auth-service:
-  image: tohieu1603/micro-exchange-auth-service:latest
+  image: tohieu16/micro-exchange-auth-service:latest
   env_file: ./auth-service/.env
   ports: ["8081:8081", "9081:9081"]
 ```
@@ -90,19 +90,19 @@ Local machine, one-off:
 
 ```bash
 # Login once
-docker login -u tohieu1603
+docker login -u tohieu16
 
 # Backend services — repo root, image per service
 for svc in auth-service wallet-service market-service trading-service \
            futures-service notification-service gateway es-indexer; do
-  docker build -f $svc/Dockerfile -t tohieu1603/micro-exchange-$svc:latest .
-  docker push tohieu1603/micro-exchange-$svc:latest
+  docker build -f $svc/Dockerfile -t tohieu16/micro-exchange-$svc:latest .
+  docker push tohieu16/micro-exchange-$svc:latest
 done
 
 # Frontend — separate repo
 cd ../frontendc
-docker build -t tohieu1603/micro-exchange-frontend:latest .
-docker push tohieu1603/micro-exchange-frontend:latest
+docker build -t tohieu16/micro-exchange-frontend:latest .
+docker push tohieu16/micro-exchange-frontend:latest
 ```
 
 ## Troubleshooting

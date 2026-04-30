@@ -16,7 +16,7 @@
 //   1. New Pipeline job → SCM = this repo → Script Path = Jenkinsfile
 //   2. Add credentials: Manage Jenkins → Credentials → Global → Add
 //      "Username with password", ID = dockerhub-credentials.
-//   3. Job parameters → string DOCKERHUB_USER (default tohieu1603).
+//   3. Job parameters → string DOCKERHUB_USER (default tohieu16).
 //   4. Make sure the Jenkins agent has docker + go 1.25 (or use a Docker
 //      agent: agent { docker { image 'golang:1.25' } } — but you still need
 //      docker-in-docker for the image-build stage).
@@ -25,7 +25,7 @@ pipeline {
   agent any
 
   parameters {
-    string(name: 'DOCKERHUB_USER', defaultValue: 'tohieu1603',
+    string(name: 'DOCKERHUB_USER', defaultValue: 'tohieu16',
            description: 'Docker Hub user/org for image tags')
   }
 
