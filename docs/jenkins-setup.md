@@ -117,6 +117,24 @@ ssh oceanroot@100.112.117.30 \
   < /path/to/repo/infra/jenkins/exchange-deploy.sh
 ```
 
+## Rollback
+
+Every successful build snapshots the prior binary as `<svc>/bin/<svc>.previous` before overwriting it. Two rollback paths:
+
+**Automatic** — on a failed health gate the script swaps the `.previous` binaries back, restarts, and re-checks health. The Jenkins run still fails so you know something broke, but production stays on the last-known-good build.
+
+**Manual** — for any reason (a regression that passed health but misbehaves under load):
+
+```bash
+ssh oceanroot@100.112.117.30 \
+  "ROLLBACK=1 bash -s" \
+  < /path/to/repo/infra/jenkins/exchange-deploy.sh
+```
+
+Skips git/build entirely; only swaps + restarts + health-checks.
+
+> Note: `.previous` is a single-step history. Rolling back twice in a row leaves nothing to revert to — fix forward instead.
+
 ## Troubleshooting
 
 | Symptom | Likely cause / fix |
@@ -139,6 +157,6 @@ ssh oceanroot@100.112.117.30 \
 
 ## Unresolved questions
 
-- **Roll-forward only**? On a failed health check the deploy script aborts but doesn't roll back the binaries. Worth adding an automatic revert if the previous binary is still on disk?
 - **Zero-downtime**? `systemctl restart` produces a brief 502 window. Switch to `systemctl reload` (if services support SIGHUP) or run two instances behind a proxy with sticky tagging?
 - **Secrets management**? `.env` files on the host are ergonomic but unaudited. Move to Vault / Doppler / SOPS as scale grows?
+- **Multi-step rollback history**? Today only the last binary is kept (`<svc>.previous`). For deeper history, rotate via `<svc>.N` ring or move to a deploy-tarball-per-build layout.
