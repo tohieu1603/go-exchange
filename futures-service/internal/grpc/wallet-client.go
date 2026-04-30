@@ -8,6 +8,19 @@ import (
 	"github.com/cryptox/shared/proto/walletpb"
 )
 
+// WalletClienter is the surface futures consumes from wallet-service.
+// Defined here (not on the proto-gen client) so unit tests can supply a
+// fake without spinning up a real gRPC server. The concrete *WalletClient
+// satisfies it via its existing methods.
+type WalletClienter interface {
+	CheckBalance(ctx context.Context, userID uint, currency string, needed float64) error
+	Deduct(ctx context.Context, userID uint, currency string, amount float64) error
+	Credit(ctx context.Context, userID uint, currency string, amount float64) error
+	Lock(ctx context.Context, userID uint, currency string, amount float64) error
+	Unlock(ctx context.Context, userID uint, currency string, amount float64) error
+	GetBalance(ctx context.Context, userID uint, currency string) (balance, locked float64, err error)
+}
+
 type WalletClient struct {
 	client walletpb.WalletServiceClient
 }

@@ -59,14 +59,48 @@ pipeline {
     }
 
     stage('Tests') {
-      // Per-service `go test`. Skipped if a service has no tests yet (script
-      // exits 0 when no test files match).
+      // Per-service `go test -race -cover`. The race detector catches
+      // concurrency issues in the matching engine + WS hub. Coverage
+      // numbers print per-package; failure of any service aborts.
       steps {
         sh '''
           for svc in shared auth-service wallet-service market-service trading-service futures-service notification-service gateway es-indexer; do
             echo "── testing $svc ──"
-            ( cd $svc && go test ./... ) || exit 1
+            ( cd $svc && go test -race -cover -coverprofile=coverage.out ./... ) || exit 1
           done
+        '''
+      }
+    }
+
+    stage('Coverage gate') {
+      // Soft floor that grows over time. Today's totals (Apr 2026):
+      //   shared 7.8% · wallet 5.5% · futures 6.5% · trading 2.0%
+      //   auth/market/notif/gateway/es-indexer 0% (no tests yet)
+      // Floor 2% catches accidental test deletion without blocking work
+      // on untested services. RAISE this number as new tests land.
+      // Services reporting 0.0% are skipped (no tests anywhere).
+      environment {
+        COVERAGE_MIN = '2.0'
+      }
+      steps {
+        sh '''
+          set -eu
+          fail=0
+          for svc in shared auth-service wallet-service market-service trading-service futures-service notification-service gateway es-indexer; do
+            f="${svc}/coverage.out"
+            if [ ! -s "$f" ]; then continue; fi
+            pct=$(cd $svc && go tool cover -func=coverage.out | awk '/^total:/ {gsub("%","",$3); print $3}')
+            if awk -v p="$pct" 'BEGIN { exit (p+0 == 0) }'; then
+              echo "── $svc coverage: 0% (no tests, skipped)"
+              continue
+            fi
+            echo "── $svc coverage: ${pct}% (floor ${COVERAGE_MIN}%)"
+            awk -v got="$pct" -v min="$COVERAGE_MIN" 'BEGIN { exit (got+0 < min+0) }' || {
+              echo "FAIL: $svc below coverage floor"
+              fail=1
+            }
+          done
+          [ "$fail" = "0" ]
         '''
       }
     }

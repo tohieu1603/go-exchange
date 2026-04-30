@@ -28,7 +28,7 @@ type posWithPnL struct {
 type LiquidationEngine struct {
 	db           *gorm.DB
 	positionRepo repository.PositionRepo
-	walletClient *svcgrpc.WalletClient
+	walletClient svcgrpc.WalletClienter
 	rdb          *redis.Client
 	hub          *ws.Hub
 	bus          eventbus.EventPublisher
@@ -36,7 +36,7 @@ type LiquidationEngine struct {
 
 func NewLiquidationEngine(
 	positionRepo repository.PositionRepo,
-	walletClient *svcgrpc.WalletClient,
+	walletClient svcgrpc.WalletClienter,
 	db *gorm.DB,
 	rdb *redis.Client,
 	hub *ws.Hub,

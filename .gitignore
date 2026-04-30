@@ -30,9 +30,11 @@ vendor/
 *~
 .DS_Store
 
-# Coverage
+# Coverage (per-service files left by `go test -coverprofile`)
 coverage.out
 coverage.html
+**/coverage.out
+**/coverage.html
 
 # Local Docker volumes
 pgdata-*/

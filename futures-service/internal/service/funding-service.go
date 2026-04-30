@@ -26,7 +26,7 @@ import (
 type FundingService struct {
 	repo         repository.FundingRepo
 	posRepo      repository.PositionRepo
-	walletClient *svcgrpc.WalletClient
+	walletClient svcgrpc.WalletClienter
 	rdb          *redis.Client
 	bus          eventbus.EventPublisher
 }
@@ -34,7 +34,7 @@ type FundingService struct {
 func NewFundingService(
 	repo repository.FundingRepo,
 	posRepo repository.PositionRepo,
-	walletClient *svcgrpc.WalletClient,
+	walletClient svcgrpc.WalletClienter,
 	rdb *redis.Client,
 	bus eventbus.EventPublisher,
 ) *FundingService {
