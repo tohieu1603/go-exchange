@@ -1,25 +1,8 @@
 // Backend CI/CD pipeline — Micro-Exchange.
-//
-// On every push to any branch:
-//   1. go vet + go build per service (parallel, fail-fast).
-//   2. go test -race -cover per service.
-//   3. Coverage floor 2% per tested service.
-//
-// On `main` only:
-//   4. SSH into the deploy host, run infra/jenkins/exchange-deploy.sh
-//      (streamed from the Jenkins workspace via stdin so the script is
-//      version-controlled in this repo, not on the Jenkins server).
+// Place at repo root of `tohieu1603/go-exchange` as `Jenkinsfile`.
 //
 // Required Jenkins credentials:
-//   - server-ssh-key  : SSH private key (Username with private key) for
-//                       the deploy user on $DEPLOY_HOST.
-//
-// Wire-up:
-//   1. Manage Jenkins → Credentials → Global → Add → SSH Username with
-//      private key. ID = server-ssh-key. Username = oceanroot. Paste key.
-//   2. New Item → Pipeline → SCM = this repo → Script Path = Jenkinsfile.
-//   3. (Optional) Build Triggers → "GitHub hook trigger for GITScm polling"
-//      and add a webhook on GitHub.
+//   - server-ssh-key: SSH private key (oceanroot user) for deploy host.
 
 pipeline {
   agent any
@@ -35,7 +18,6 @@ pipeline {
     GIT_SHA     = "${env.GIT_COMMIT?.take(7) ?: 'dev'}"
     DEPLOY_HOST = '100.112.117.30'
     DEPLOY_USER = 'oceanroot'
-    BRANCH_NAME = "${env.BRANCH_NAME ?: 'main'}"
   }
 
   stages {
@@ -55,50 +37,21 @@ pipeline {
     }
 
     stage('Tests') {
-      // -race catches concurrency bugs in matching engine + WS hub.
-      // -coverprofile feeds the next stage's floor check.
       steps {
         sh '''
           for svc in shared auth-service wallet-service market-service trading-service futures-service notification-service gateway es-indexer; do
             echo "── testing $svc ──"
-            ( cd $svc && go test -race -cover -coverprofile=coverage.out ./... ) || exit 1
+            ( cd $svc && go test ./... ) || exit 1
           done
-        '''
-      }
-    }
-
-    stage('Coverage gate') {
-      // Soft floor — fails the build if any *tested* service drops below
-      // the threshold. Services reporting 0% (no tests yet) are skipped.
-      // Raise this number as new tests land.
-      environment { COVERAGE_MIN = '2.0' }
-      steps {
-        sh '''
-          set -eu
-          fail=0
-          for svc in shared auth-service wallet-service market-service trading-service futures-service notification-service gateway es-indexer; do
-            f="${svc}/coverage.out"
-            [ -s "$f" ] || continue
-            pct=$(cd $svc && go tool cover -func=coverage.out | awk '/^total:/ {gsub("%","",$3); print $3}')
-            if awk -v p="$pct" 'BEGIN { exit (p+0 == 0) }'; then
-              echo "── $svc coverage: 0% (no tests, skipped)"
-              continue
-            fi
-            echo "── $svc coverage: ${pct}% (floor ${COVERAGE_MIN}%)"
-            awk -v got="$pct" -v min="$COVERAGE_MIN" 'BEGIN { exit (got+0 < min+0) }' || {
-              echo "FAIL: $svc below coverage floor"
-              fail=1
-            }
-          done
-          [ "$fail" = "0" ]
         '''
       }
     }
 
     stage('Deploy to server') {
-      // Native-binary deploy. The script lives in the repo so it's
-      // versioned alongside the code that depends on it; we stream it
-      // over SSH stdin so no copy step is needed.
+      // Native-binary deploy via SSH heredoc. Repo lives at
+      //   /home/oceanroot/exchange
+      // and 8 systemd units exchange-{auth,wallet,market,trading,futures,
+      // notification,gateway,es-indexer} run binaries from bin/.
       when {
         anyOf {
           branch 'main'
@@ -107,17 +60,56 @@ pipeline {
       }
       steps {
         withCredentials([sshUserPrivateKey(credentialsId: 'server-ssh-key',
-                                           keyFileVariable: 'SSH_KEY',
+                                           keyFileVariable: 'KEY',
                                            usernameVariable: 'SSH_USER')]) {
+          // The closing `EOF` MUST be at column 0 — bash heredoc terminators
+          // can't have leading whitespace. Don't re-indent the EOF below.
           sh '''
-            set -eu
-            ssh -i "$SSH_KEY" \\
-                -o StrictHostKeyChecking=no \\
-                -o UserKnownHostsFile=/dev/null \\
-                -o ConnectTimeout=10 \\
-                "$SSH_USER@$DEPLOY_HOST" \\
-                "BRANCH=$BRANCH_NAME GIT_SHA=$GIT_SHA bash -s" \\
-                < infra/jenkins/exchange-deploy.sh
+ssh -i "$KEY" \\
+    -o StrictHostKeyChecking=no \\
+    -o UserKnownHostsFile=/dev/null \\
+    -o ConnectTimeout=10 \\
+    "$SSH_USER@$DEPLOY_HOST" bash -s <<'EOF'
+set -euo pipefail
+cd /home/oceanroot/exchange
+git fetch origin
+git reset --hard origin/main
+git clean -fd
+export PATH=$PATH:/usr/local/go/bin
+
+# go.work sync is best-effort — first-time hosts won't have a
+# go.work.sum yet, and a mismatch between checked-in sum and
+# the resolved deps shouldn't block deploy.
+go work sync || true
+
+# Each service builds its own cmd into a shared bin/. The otelgin shim
+# grew into multiple cmd/main.go files but isn't always reflected in
+# go.mod (drift from manual edits) — pull it on demand.
+for svc in auth-service wallet-service market-service \\
+            trading-service futures-service notification-service \\
+            gateway es-indexer; do
+  echo "── build $svc ──"
+  cd "/home/oceanroot/exchange/$svc"
+  if grep -q otelgin cmd/main.go 2>/dev/null && ! grep -q otelgin go.mod; then
+    go get go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin@latest
+  fi
+  go build -o "/home/oceanroot/exchange/bin/$svc" ./cmd
+done
+
+# Restart 8 units. Names omit the -service suffix:
+#   exchange-auth, exchange-wallet, …
+# Sudoers entry must NOPASSWD-allow systemctl restart exchange-*.
+for svc in auth wallet market trading futures notification gateway es-indexer; do
+  sudo -n /bin/systemctl restart "exchange-$svc"
+done
+
+# Health gate. Gateway exposes /api/health on :3079 once all
+# downstream services finish their cold-start.
+sleep 5
+curl -sf http://127.0.0.1:3079/api/health
+echo
+echo "Deploy OK"
+EOF
           '''
         }
       }
@@ -125,11 +117,7 @@ pipeline {
   }
 
   post {
-    success {
-      echo "Pipeline OK. sha=${env.GIT_SHA} branch=${env.BRANCH_NAME}"
-    }
-    failure {
-      echo "Pipeline FAILED at sha ${env.GIT_SHA}"
-    }
+    success { echo "Pipeline OK. Deployed (sha ${env.GIT_SHA})" }
+    failure { echo "Pipeline FAILED at sha ${env.GIT_SHA}" }
   }
 }

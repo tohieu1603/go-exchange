@@ -3,8 +3,10 @@
 # at once.
 #
 # Replace:
-#   {{SERVICE}}        — eg "auth-service"
-#   {{REPO_DIR}}       — eg "/srv/micro-exchange"
+#   {{SERVICE}}        — eg "auth-service" (the cmd dir name)
+#   {{UNIT}}           — eg "auth"  (the suffix used in unit name; matches
+#                        the `for svc in auth wallet ...` loop in Jenkinsfile)
+#   {{REPO_DIR}}       — eg "/home/oceanroot/exchange"
 #   {{ENV_FILE}}       — eg "/etc/exchange/auth-service.env"
 #   {{USER}}           — system user that owns REPO_DIR (eg "oceanroot")
 
@@ -18,14 +20,14 @@ Type=simple
 User={{USER}}
 WorkingDirectory={{REPO_DIR}}/{{SERVICE}}
 EnvironmentFile={{ENV_FILE}}
-ExecStart={{REPO_DIR}}/{{SERVICE}}/bin/{{SERVICE}}
+# Binaries land in a shared bin/ produced by the Jenkinsfile deploy stage.
+ExecStart={{REPO_DIR}}/bin/{{SERVICE}}
 Restart=always
 RestartSec=3
-# Limit log spam from a crash-loop so journald doesn't fill the disk.
+# Crash-loop guard so a broken bundle doesn't fill journald.
 StartLimitIntervalSec=60
 StartLimitBurst=5
-# Read-only system protections — these binaries don't need to write
-# outside their working directory.
+# Hardening — runtime doesn't write outside its work dir.
 ProtectSystem=full
 NoNewPrivileges=yes
 PrivateTmp=yes
