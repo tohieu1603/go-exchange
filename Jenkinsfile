@@ -40,6 +40,13 @@ pipeline {
       // -race catches concurrency bugs in matching engine + WS hub +
       // balance cache. Slows tests ~2-3× but the suite is small.
       // -coverprofile feeds the next stage's floor check.
+      //
+      // -race REQUIRES cgo (C compiler). Agent must have gcc:
+      //   Debian/Ubuntu:  sudo apt-get install -y build-essential
+      //   Alpine:         apk add build-base
+      // CGO_ENABLED=1 forces cgo on even if Go's default is off
+      // (e.g. cross-compile-friendly defaults on some images).
+      environment { CGO_ENABLED = '1' }
       steps {
         sh '''
           for svc in shared auth-service wallet-service market-service trading-service futures-service notification-service gateway es-indexer; do
