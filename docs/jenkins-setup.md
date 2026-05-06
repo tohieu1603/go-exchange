@@ -82,6 +82,25 @@ The installer renders [`exchange-template.service`](../infra/systemd/exchange-te
 
 The deploy stage hits `http://127.0.0.1:3079/api/health`. Adjust the port in `Jenkinsfile` if your gateway listens elsewhere.
 
+### 7. Google Sign-In (optional)
+
+Auth-service exposes `POST /api/auth/google` which verifies a Google ID token. To enable:
+
+1. Google Cloud Console → APIs & Services → Credentials → **Create OAuth 2.0 Web Client**.
+   - **Authorized JavaScript origins**:
+     - `https://exchange.operis.vn`
+     - `http://localhost:3000` (dev)
+   - **Authorized redirect URIs**: leave empty — Google Identity Services uses popup flow, not redirect.
+2. Copy the Client ID (looks like `123-abc.apps.googleusercontent.com`).
+3. Set on the host:
+   ```bash
+   echo 'GOOGLE_CLIENT_ID=123-abc.apps.googleusercontent.com' | sudo tee -a /etc/exchange/auth-service.env
+   sudo systemctl restart exchange-auth
+   ```
+4. Set the **same** Client ID as `NEXT_PUBLIC_GOOGLE_CLIENT_ID` in the FE — see frontend [`docs/jenkins-setup.md`](https://github.com/tohieu1603/go_exchange_fe/blob/main/docs/jenkins-setup.md).
+
+If `GOOGLE_CLIENT_ID` is empty the endpoint returns 401; the FE falls back to the email/password form.
+
 ## Jenkins setup
 
 ### Add SSH credential

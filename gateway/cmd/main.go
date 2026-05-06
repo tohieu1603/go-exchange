@@ -130,6 +130,7 @@ func main() {
 	routes := map[string]route{
 		"/api/auth/register":  {authURL, false},
 		"/api/auth/login":     {authURL, false},
+		"/api/auth/google":    {authURL, false},
 		"/api/auth/2fa/login": {authURL, false},
 		"/api/auth/refresh":   {authURL, false},
 		"/api/webhook/":       {walletURL, false},

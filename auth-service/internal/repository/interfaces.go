@@ -11,6 +11,7 @@ type UserRepo interface {
 	Create(tx *gorm.DB, user *model.User) error
 	FindByEmail(email string) (*model.User, error)
 	FindByID(id uint) (*model.User, error)
+	FindByGoogleSub(sub string) (*model.User, error)
 	Update(tx *gorm.DB, user *model.User) error
 	UpdateField(tx *gorm.DB, id uint, field string, value interface{}) error
 	UpdateFields(tx *gorm.DB, id uint, updates map[string]interface{}) error

@@ -80,6 +80,33 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	response.OK(c, gin.H{"user": result.User})
 }
 
+// GoogleLogin godoc
+// @Summary      Login with Google
+// @Description  Verifies a Google ID token (the `credential` from Google Identity Services), find-or-creates the user, and sets cookies.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        body  body  object{idToken=string}  true  "Google ID token payload"
+// @Success      200   {object}  map[string]interface{}
+// @Failure      401   {object}  map[string]interface{}
+// @Router       /auth/google [post]
+func (h *AuthHandler) GoogleLogin(c *gin.Context) {
+	var req struct {
+		IDToken string `json:"idToken" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	result, err := h.auth.LoginWithGoogle(req.IDToken, c.ClientIP(), c.Request.UserAgent())
+	if err != nil {
+		response.Error(c, 401, err.Error())
+		return
+	}
+	middleware.SetAuthCookies(c, result.AccessToken, result.RefreshToken)
+	response.OK(c, gin.H{"user": result.User})
+}
+
 // StepUp godoc
 // @Summary      Complete step-up (new-device) challenge
 // @Description  Confirms new-device challenge; issues access + refresh cookies on success
@@ -165,6 +192,33 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 		return
 	}
 	response.OK(c, user)
+}
+
+// SetPassword godoc
+// @Summary      Set initial password (OAuth-only accounts)
+// @Description  Installs a first password for accounts created via Google. Refuses once a password exists.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Security     CookieAuth
+// @Param        body  body  object{newPassword=string}  true  "New password"
+// @Success      200   {object}  map[string]interface{}
+// @Failure      400   {object}  map[string]interface{}
+// @Router       /auth/set-password [post]
+func (h *AuthHandler) SetPassword(c *gin.Context) {
+	var req struct {
+		NewPassword string `json:"newPassword" binding:"required,min=6"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	userID := middleware.GetUserID(c)
+	if err := h.auth.SetInitialPassword(userID, req.NewPassword); err != nil {
+		response.Error(c, 400, err.Error())
+		return
+	}
+	response.OK(c, gin.H{"message": "password set"})
 }
 
 func (h *AuthHandler) ChangePassword(c *gin.Context) {

@@ -255,6 +255,97 @@ func (s *AuthService) Login(req LoginReq) (*LoginResult, error) {
 	return &LoginResult{AccessToken: access, RefreshToken: refresh, User: user}, nil
 }
 
+// LoginWithGoogle verifies a Google ID token, find-or-creates the user, then
+// issues a real cookie pair. New accounts get an empty PasswordHash so the
+// password-login path always rejects them — they must keep using Google.
+//
+// Step-up gate is intentionally skipped: Google already proved possession of
+// the account, which is a strictly stronger signal than our 6-digit OTP.
+func (s *AuthService) LoginWithGoogle(idToken, ip, ua string) (*LoginResult, error) {
+	ctx := context.Background()
+	claims, err := VerifyGoogleIDToken(ctx, idToken)
+	if err != nil {
+		return nil, err
+	}
+	if claims.Email == "" {
+		return nil, errors.New("google token missing email")
+	}
+	if !claims.EmailVerified {
+		return nil, errors.New("google account email not verified")
+	}
+
+	// Lookup order: google_sub → email. Sub is preferred because it's
+	// immutable; email may change on Workspace domains.
+	user, err := s.userRepo.FindByGoogleSub(claims.Sub)
+	if err != nil || user == nil || user.ID == 0 {
+		user, err = s.userRepo.FindByEmail(claims.Email)
+	}
+	isNew := err != nil || user == nil || user.ID == 0
+
+	if isNew {
+		user = &model.User{
+			Email:         claims.Email,
+			PasswordHash:  "", // Google-only — password CheckPassword always fails on empty.
+			FullName:      claims.Name,
+			Role:          "USER",
+			KYCStatus:     "NONE",
+			EmailVerified: true, // Google asserted email_verified above.
+			GoogleSub:     claims.Sub,
+			AvatarURL:     claims.Picture,
+			RegisterIP:    ip,
+		}
+		if err := s.userRepo.Create(nil, user); err != nil {
+			return nil, err
+		}
+		s.bus.Publish(ctx, eventbus.TopicUserRegistered, eventbus.UserRegisteredEvent{
+			UserID: user.ID, Email: user.Email, FullName: user.FullName,
+			ClientIP: ip,
+		})
+		// Record the device fingerprint as known so the very next login (likely
+		// from the same browser) doesn't trip step-up.
+		regDeviceID := utils.DeviceFingerprint(ip, ua, "")
+		s.audit.SuccessDevice(user.ID, user.Email, model.AuditRegister, ip, ua, regDeviceID, "google")
+	} else {
+		// Backfill on first Google login for an existing password account.
+		updates := map[string]interface{}{}
+		if user.GoogleSub == "" {
+			updates["google_sub"] = claims.Sub
+		}
+		if user.AvatarURL == "" && claims.Picture != "" {
+			updates["avatar_url"] = claims.Picture
+		}
+		if !user.EmailVerified {
+			updates["email_verified"] = true
+		}
+		if len(updates) > 0 {
+			_ = s.userRepo.UpdateFields(nil, user.ID, updates)
+		}
+	}
+
+	if user.IsLocked {
+		return nil, errors.New("account is locked: " + user.LockReason)
+	}
+	if user.Role == types.RoleSystem {
+		return nil, errors.New("invalid credentials")
+	}
+
+	access, refresh, err := s.issueTokenPair(user, ua, ip)
+	if err != nil {
+		return nil, err
+	}
+	if ip != "" {
+		_ = s.userRepo.UpdateField(nil, user.ID, "last_login_ip", ip)
+	}
+	s.rdb.Set(ctx, fmt.Sprintf("kyc:%d", user.ID), user.KYCStep, 0)
+	s.rdb.Set(ctx, fmt.Sprintf("user_locked:%d", user.ID), boolStr(user.IsLocked), 0)
+
+	deviceID := utils.DeviceFingerprint(ip, ua, "")
+	s.audit.SuccessDevice(user.ID, user.Email, model.AuditLoginSuccess, ip, ua, deviceID, "google")
+	metrics.LoginTotal.WithLabelValues("success").Inc()
+
+	return &LoginResult{AccessToken: access, RefreshToken: refresh, User: user}, nil
+}
+
 // Login2FA completes 2FA login using a temp token and TOTP code.
 func (s *AuthService) Login2FA(tempToken, code, ua, ip string) (string, string, *model.User, error) {
 	claims, err := utils.ValidateTempToken(tempToken, s.secret)
@@ -333,6 +424,31 @@ func (s *AuthService) UpdateProfile(userID uint, fullName string) (*model.User, 
 		return nil, err
 	}
 	return user, nil
+}
+
+// SetInitialPassword installs a password for an account that has none —
+// typically an OAuth-only user (Google sign-in). Refuses if the account
+// already has a password set, so it can't be abused as a back-door reset.
+func (s *AuthService) SetInitialPassword(userID uint, newPass string) error {
+	user, err := s.userRepo.FindByID(userID)
+	if err != nil {
+		return errors.New("user not found")
+	}
+	if user.PasswordHash != "" {
+		return errors.New("password already set; use change-password instead")
+	}
+	if err := utils.CheckPasswordPolicy(newPass); err != nil {
+		return err
+	}
+	hash, err := utils.HashPassword(newPass)
+	if err != nil {
+		return err
+	}
+	if err := s.userRepo.UpdateField(nil, user.ID, "password_hash", hash); err != nil {
+		return err
+	}
+	s.audit.Success(user.ID, user.Email, model.AuditPasswordChange, "", "", "initial password set")
+	return nil
 }
 
 // ChangePassword verifies the old password, updates to the new one, and

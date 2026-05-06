@@ -2,6 +2,14 @@ package model
 
 import "time"
 
+// AfterFind populates derived flags so handlers don't have to. Keeps the
+// User payload self-describing for the FE (e.g. "should I show Set Password
+// instead of Change Password?").
+func (u *User) AfterFind() error {
+	u.HasPassword = u.PasswordHash != ""
+	return nil
+}
+
 type User struct {
 	ID               uint      `gorm:"primaryKey" json:"id"`
 	Email            string    `gorm:"uniqueIndex;not null" json:"email"`
@@ -19,6 +27,14 @@ type User struct {
 	LockReason       string    `json:"lockReason,omitempty"`
 	LastLoginIP      string    `json:"lastLoginIp,omitempty"`
 	RegisterIP       string    `json:"registerIp,omitempty"`
+	// Google OAuth — `sub` is the immutable Google account id (preferred over
+	// email since users can change Gmail addresses on Workspace domains).
+	// Empty for password-only users.
+	GoogleSub string `gorm:"index" json:"-"`
+	AvatarURL string `json:"avatarUrl,omitempty"`
+	// Derived (NOT persisted) — populated by AfterFind. Lets the FE pick
+	// "Set Password" vs "Change Password" without exposing the hash.
+	HasPassword bool `gorm:"-" json:"hasPassword"`
 	CreatedAt        time.Time `json:"createdAt"`
 	UpdatedAt        time.Time `json:"updatedAt"`
 }
