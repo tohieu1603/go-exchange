@@ -2,19 +2,14 @@ package redisutil
 
 import (
 	"context"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func init() { gin.SetMode(gin.TestMode) }
 
 // newRedis returns a real-ish redis-client backed by an in-process miniredis.
 // miniredis supports the Lua scripting we use for the sliding-window window.
@@ -92,23 +87,4 @@ func TestRateLimiter_FailClosedOnRedisError(t *testing.T) {
 	rl := NewRateLimiter(rdb)
 	assert.False(t, rl.Allow(context.Background(), "x", time.Minute, 100),
 		"Allow must fail-closed when Redis is unreachable")
-}
-
-func TestRateLimiter_GinMiddleware_429OnExcess(t *testing.T) {
-	rdb, _ := newRedis(t)
-	rl := NewRateLimiter(rdb)
-	r := gin.New()
-	r.Use(rl.GinMiddleware("test", time.Minute, 2))
-	r.GET("/p", func(c *gin.Context) { c.String(200, "ok") })
-
-	hit := func() int {
-		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("GET", "/p", nil)
-		req.RemoteAddr = "203.0.113.1:1234"
-		r.ServeHTTP(w, req)
-		return w.Code
-	}
-	assert.Equal(t, 200, hit())
-	assert.Equal(t, 200, hit())
-	assert.Equal(t, http.StatusTooManyRequests, hit(), "3rd should 429")
 }

@@ -3,10 +3,8 @@ package redisutil
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -32,20 +30,4 @@ func (rl *RateLimiter) Allow(ctx context.Context, key string, window time.Durati
 		return false // fail-closed: deny on Redis errors (security over availability)
 	}
 	return result == 1
-}
-
-// GinMiddleware returns a Gin middleware that rate-limits by IP.
-// window: time window, maxReq: max requests per window, prefix: key prefix
-func (rl *RateLimiter) GinMiddleware(prefix string, window time.Duration, maxReq int) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		key := fmt.Sprintf("%s:%s", prefix, c.ClientIP())
-		if !rl.Allow(c.Request.Context(), key, window, maxReq) {
-			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-				"success": false,
-				"message": "rate limit exceeded, try again later",
-			})
-			return
-		}
-		c.Next()
-	}
 }

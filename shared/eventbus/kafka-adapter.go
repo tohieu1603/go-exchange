@@ -108,13 +108,13 @@ func (kb *KafkaBus) Subscribe(topic string, handler Handler) {
 }
 
 // StartConsumer creates a Kafka consumer group reader and processes messages.
-// Captures current handlers snapshot so each consumer group runs its own handlers.
+//
+// The handler set registered for the topic is snapshotted at start time so the
+// reader goroutine iterates a stable slice. Delivery is at-least-once: the
+// offset is committed only when every handler returns nil (see dispatch) — the
+// same acknowledgement rule the Redis Streams backend uses.
 func (kb *KafkaBus) StartConsumer(ctx context.Context, topic, group, consumer string) {
-	// Snapshot handlers registered for this topic at start time
-	handlers := make([]Handler, len(kb.handlers[topic]))
-	copy(handlers, kb.handlers[topic])
-	// Clear topic handlers so next Subscribe+StartConsumer pair gets fresh set
-	kb.handlers[topic] = nil
+	handlers := snapshotHandlers(kb.handlers[topic])
 
 	r := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:        kb.brokers,
@@ -144,14 +144,8 @@ func (kb *KafkaBus) StartConsumer(ctx context.Context, topic, group, consumer st
 				time.Sleep(2 * time.Second)
 				continue
 			}
-			allOK := true
-			for _, h := range handlers {
-				if err := h(ctx, fmt.Sprintf("%d-%d", msg.Partition, msg.Offset), msg.Value); err != nil {
-					log.Printf("[kafka] handler error [%s/%s/%d-%d]: %v", group, topic, msg.Partition, msg.Offset, err)
-					allOK = false
-				}
-			}
-			if allOK {
+			id := fmt.Sprintf("%d-%d", msg.Partition, msg.Offset)
+			if dispatch(ctx, handlers, "kafka", topic, group, id, msg.Value) {
 				if err := r.CommitMessages(ctx, msg); err != nil {
 					log.Printf("[kafka] commit error [%s]: %v", group, err)
 				}

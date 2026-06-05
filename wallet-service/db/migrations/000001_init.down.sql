@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS withdrawals;
+DROP TABLE IF EXISTS deposits;
+DROP TABLE IF EXISTS wallets;

@@ -1,0 +1,35 @@
+version: "2"
+sql:
+  - engine: "postgresql"
+    schema: "migrations"
+    queries: "queries"
+    gen:
+      go:
+        package: "sqlc"
+        out: "../internal/adapter/postgres/sqlc"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_interface: true
+        emit_empty_slices: true
+        overrides:
+          - db_type: "timestamptz"
+            go_type: "time.Time"
+          - db_type: "pg_catalog.numeric"
+            go_type: "float64"
+          # Nullable timestamps map to *time.Time so a NULL stays nil (the domain
+          # uses optional times for "never used / not revoked / no expiry").
+          - column: "api_keys.last_used_at"
+            go_type: { type: "time.Time", pointer: true }
+          - column: "api_keys.expires_at"
+            go_type: { type: "time.Time", pointer: true }
+          - column: "api_keys.revoked_at"
+            go_type: { type: "time.Time", pointer: true }
+          - column: "user_bonus.expires_at"
+            go_type: { type: "time.Time", pointer: true }
+          - column: "refresh_tokens.used_at"
+            go_type: { type: "time.Time", pointer: true }
+          - column: "refresh_tokens.revoked_at"
+            go_type: { type: "time.Time", pointer: true }
+          # Nullable parent pointer in the refresh-token rotation chain.
+          - column: "refresh_tokens.parent_id"
+            go_type: { type: "int64", pointer: true }

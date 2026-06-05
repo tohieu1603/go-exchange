@@ -2,6 +2,7 @@ go 1.25.7
 
 use (
 	./auth-service
+	./es-indexer
 	./futures-service
 	./gateway
 	./market-service
@@ -9,5 +10,4 @@ use (
 	./shared
 	./trading-service
 	./wallet-service
-	./es-indexer
 )

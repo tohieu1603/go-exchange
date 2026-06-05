@@ -1,0 +1,17 @@
+DROP TABLE IF EXISTS coins;
+DROP TABLE IF EXISTS platform_settings;
+DROP TABLE IF EXISTS user_trade_pairs;
+DROP TABLE IF EXISTS refresh_tokens;
+DROP TABLE IF EXISTS referral_commissions;
+DROP TABLE IF EXISTS referrals;
+DROP TABLE IF EXISTS referral_codes;
+DROP TABLE IF EXISTS kyc_profiles;
+DROP TABLE IF EXISTS kyc_documents;
+DROP TABLE IF EXISTS fraud_logs;
+DROP TABLE IF EXISTS user_volume30ds;
+DROP TABLE IF EXISTS fee_tiers;
+DROP TABLE IF EXISTS user_bonus;
+DROP TABLE IF EXISTS bonus_promotions;
+DROP TABLE IF EXISTS audit_logs;
+DROP TABLE IF EXISTS api_keys;
+DROP TABLE IF EXISTS users;

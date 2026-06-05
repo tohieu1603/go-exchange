@@ -92,8 +92,14 @@ func (b *Bus) Subscribe(topic string, handler Handler) {
 // StartConsumer creates a consumer group and starts processing.
 // Multiple instances with the same group = load balanced (each event processed once per group).
 // Different groups = fan-out (each group gets every event).
+//
+// Delivery is at-least-once: a message is XAck'd only when every handler
+// registered for the topic returns nil (see dispatch). The handler set is
+// snapshotted at start time so the consumer goroutine never races a later
+// Subscribe — identical to the Kafka backend's behaviour.
 func (b *Bus) StartConsumer(ctx context.Context, topic, group, consumer string) {
 	stream := "stream:" + topic
+	handlers := snapshotHandlers(b.handlers[topic])
 
 	// Create group, ignore if exists
 	b.rdb.XGroupCreateMkStream(ctx, stream, group, "0").Err()
@@ -123,15 +129,7 @@ func (b *Bus) StartConsumer(ctx context.Context, topic, group, consumer string) 
 			for _, result := range results {
 				for _, msg := range result.Messages {
 					data, _ := msg.Values["data"].(string)
-					handlers := b.handlers[topic]
-					allOK := true
-					for _, h := range handlers {
-						if err := h(ctx, msg.ID, []byte(data)); err != nil {
-							log.Printf("[eventbus] handler error [%s/%s]: %v", topic, msg.ID, err)
-							allOK = false
-						}
-					}
-					if allOK {
+					if dispatch(ctx, handlers, "eventbus", topic, group, msg.ID, []byte(data)) {
 						b.rdb.XAck(ctx, stream, group, msg.ID)
 					}
 				}
@@ -139,7 +137,7 @@ func (b *Bus) StartConsumer(ctx context.Context, topic, group, consumer string) 
 		}
 	}()
 
-	log.Printf("[eventbus] consumer started: topic=%s group=%s consumer=%s", topic, group, consumer)
+	log.Printf("[eventbus] consumer started: topic=%s group=%s consumer=%s handlers=%d", topic, group, consumer, len(handlers))
 }
 
 // PendingCount returns number of unprocessed events for a consumer group.
